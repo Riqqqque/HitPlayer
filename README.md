@@ -72,6 +72,8 @@ The installer is written to:
 src-tauri\target\release\bundle\nsis\HitPlayer_0.1.3_x64-setup.exe
 ```
 
+GitHub keeps normal push checks quick. The main build workflow runs the frontend build and Rust tests only. Full Windows installer builds run from the separate **Installer** workflow when started manually or when a `v*` release tag is pushed.
+
 ## FFmpeg Sidecars
 
 HitPlayer always uses bundled/local binaries. It does not call `ffmpeg` or `ffprobe` from `PATH`.
@@ -163,6 +165,8 @@ npm run tauri:build
 ```
 
 Running a newer setup EXE updates the existing current-user install. The installer asks to close HitPlayer if it is running, clears stale app binaries/resources from the install folder, and then installs the new files. It does not touch exported videos or user media.
+
+For GitHub release builds, run the **Installer** workflow or push a version tag. This avoids rebuilding the full installer after every regular code change.
 
 ## Known Limitations
 
