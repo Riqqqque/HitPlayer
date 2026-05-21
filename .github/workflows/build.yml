@@ -42,6 +42,19 @@ jobs:
       - name: Typecheck and build frontend
         run: npm run build
 
+      - name: Create CI sidecar placeholders
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          foreach ($name in @(
+            "ffmpeg.exe",
+            "ffprobe.exe",
+            "ffmpeg-x86_64-pc-windows-msvc.exe",
+            "ffprobe-x86_64-pc-windows-msvc.exe"
+          )) {
+            Set-Content -LiteralPath "src-tauri/binaries/$name" -Value "CI placeholder for compile checks only."
+          }
+
       - name: Test Rust backend
         working-directory: src-tauri
         run: cargo test
