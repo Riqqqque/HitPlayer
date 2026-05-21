@@ -2,7 +2,6 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CompressionPanel } from "./components/CompressionPanel";
 import { ConvertPanel } from "./components/ConvertPanel";
-import { DefaultPlayerPanel } from "./components/DefaultPlayerPanel";
 import { FileInfoCard } from "./components/FileInfoCard";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { SettingsMenu } from "./components/SettingsMenu";
@@ -408,12 +407,6 @@ export default function App() {
           />
 
           <ConvertPanel hasVideo={hasVideo} isBusy={isBusy} onConvert={handleConvert} />
-
-          <DefaultPlayerPanel
-            isBusy={isBusy}
-            status={defaultPlayerStatus}
-            onSetDefaultPlayer={handleSetDefaultPlayer}
-          />
         </aside>
       </main>
 

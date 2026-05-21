@@ -70,7 +70,7 @@ npm run tauri:build
 The installer is written to:
 
 ```text
-src-tauri\target\release\bundle\nsis\HitPlayer_0.1.7_x64-setup.exe
+src-tauri\target\release\bundle\nsis\HitPlayer_0.1.8_x64-setup.exe
 ```
 
 GitHub keeps normal push checks quick. The main build workflow runs the frontend build and Rust tests only. Full Windows installer builds run from the separate **Installer** workflow when started manually or when a `v*` release tag is pushed.
@@ -144,7 +144,7 @@ HitPlayer detects NVENC before enabling the NVIDIA preset.
 
 The installer registers HitPlayer as a video file handler. Windows still requires the user to confirm default apps.
 
-Inside HitPlayer, use **Default Player > Set as Default Player**. It registers HitPlayer for the current Windows user and opens Windows Default Apps so you can choose it for the video extensions you want.
+Inside HitPlayer, open **Settings > Windows defaults > Open Default Apps**. It registers HitPlayer for the current Windows user and opens Windows Default Apps so you can choose it for the video extensions you want.
 
 ## Updating
 
