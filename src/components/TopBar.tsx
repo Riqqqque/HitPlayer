@@ -1,4 +1,5 @@
 import { FolderOpen, Maximize2, Minimize2, Settings } from "lucide-react";
+import appIcon from "../assets/app-icon.png";
 
 type TopBarProps = {
   onOpenVideo: () => void;
@@ -18,9 +19,11 @@ export function TopBar({
   return (
     <header className="flex items-center justify-between border-b border-white/10 bg-ink-950/92 px-6 py-4 backdrop-blur">
       <div className="flex items-center gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-lg border border-white/15 bg-black text-sm font-black text-white shadow-inner shadow-white/10">
-          HP
-        </div>
+        <img
+          src={appIcon}
+          alt=""
+          className="h-10 w-10 rounded-lg border border-white/15 bg-black object-cover shadow-inner shadow-white/10"
+        />
         <div>
           <h1 className="text-xl font-semibold tracking-normal text-white">HitPlayer</h1>
           <p className="text-sm text-slate-400">Play it. Cut it. Compress it.</p>
