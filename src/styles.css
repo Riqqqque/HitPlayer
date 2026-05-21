@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: #090b10;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+@layer components {
+  .primary-button {
+    @apply inline-flex items-center justify-center rounded-lg bg-hit-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-hit-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400;
+  }
+
+  .secondary-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .field {
+    @apply mt-1 w-full rounded-lg border border-white/10 bg-black/25 px-2 py-2 text-sm tabular-nums text-slate-100 outline-none transition focus:border-hit-400/60 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .preset-button {
+    @apply min-h-[72px] rounded-lg border border-white/10 bg-black/20 p-3 text-left transition hover:border-white/20 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .preset-button span {
+    @apply block text-sm font-semibold text-slate-100;
+  }
+
+  .preset-button small {
+    @apply mt-1 block text-xs leading-4 text-slate-500;
+  }
+
+  .preset-button-active {
+    @apply border-hit-400/50 bg-hit-400/10;
+  }
+
+  .progress-track {
+    @apply relative h-2 overflow-hidden rounded-full bg-black/45;
+  }
+
+  .progress-bar {
+    @apply absolute left-0 top-0 h-full rounded-full bg-hit-400 transition-all duration-300;
+  }
+
+  .progress-bar-indeterminate {
+    width: 45%;
+    animation: indeterminate 1.15s ease-in-out infinite;
+  }
+}
+
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-115%);
+  }
+  100% {
+    transform: translateX(230%);
+  }
+}

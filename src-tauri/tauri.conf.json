@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HitPlayer",
+  "version": "0.1.1",
+  "identifier": "com.rique.hitplayer",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "HitPlayer",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1080,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "installer/update-hooks.nsh"
+      }
+    },
+    "fileAssociations": [
+      {
+        "name": "HitPlayer Video",
+        "description": "HitPlayer video file",
+        "ext": ["mp4", "mkv", "mov", "avi", "webm", "m4v", "flv", "wmv", "ts", "m2ts"],
+        "mimeType": "video/mp4",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

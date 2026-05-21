@@ -1,0 +1,33 @@
+{
+  "name": "hitplayer",
+  "version": "0.1.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "tsc && vite build",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "tauri:build:no-bundle": "tauri build --no-bundle",
+    "setup:ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/download-ffmpeg.ps1",
+    "version:bump": "powershell -ExecutionPolicy Bypass -File scripts/bump-version.ps1"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^7.0.0"
+  }
+}

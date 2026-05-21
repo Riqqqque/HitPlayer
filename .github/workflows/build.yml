@@ -1,0 +1,43 @@
+name: Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Download FFmpeg sidecars
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/download-ffmpeg.ps1
+
+      - name: Typecheck and build frontend
+        run: npm run build
+
+      - name: Check Rust backend
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: Build Windows installer
+        run: npm run tauri:build
