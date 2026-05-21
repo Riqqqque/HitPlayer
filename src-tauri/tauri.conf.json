@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "HitPlayer",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "identifier": "com.rique.hitplayer",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -18,6 +18,7 @@
         "minWidth": 1080,
         "minHeight": 720,
         "resizable": true,
+        "skipTaskbar": false,
         "fullscreen": false
       }
     ],
@@ -32,10 +33,13 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
     "externalBin": ["binaries/ffmpeg", "binaries/ffprobe"],
     "windows": {
       "nsis": {
         "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
         "installerHooks": "installer/update-hooks.nsh"
       }
     },

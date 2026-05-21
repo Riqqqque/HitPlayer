@@ -35,6 +35,7 @@ pub async fn fast_trim(
             input,
             "trim_fast",
             options.output_path.as_deref(),
+            options.output_directory.as_deref(),
             fast_extension,
         )?;
         let args = vec![
@@ -85,8 +86,13 @@ pub async fn precise_trim(
         let input = Path::new(&options.input_path);
         let duration = validate_trim(&app, input, options.start_seconds, options.end_seconds)?;
         let metadata = probe_video_internal(&app, input)?;
-        let output_path =
-            default_output_path(input, "trim_precise", options.output_path.as_deref(), "mp4")?;
+        let output_path = default_output_path(
+            input,
+            "trim_precise",
+            options.output_path.as_deref(),
+            options.output_directory.as_deref(),
+            "mp4",
+        )?;
         let plan = trim_encode_plan(&metadata);
         let args = vec![
             "-y".to_string(),
@@ -166,6 +172,7 @@ pub async fn compress_video(
             input,
             options.preset.suffix(),
             options.output_path.as_deref(),
+            options.output_directory.as_deref(),
             "mp4",
         )?;
         let mut args = vec![
@@ -219,8 +226,13 @@ pub async fn convert_to_mp4(
         }
 
         let metadata = probe_video_internal(&app, input).ok();
-        let output_path =
-            default_output_path(input, "converted", options.output_path.as_deref(), "mp4")?;
+        let output_path = default_output_path(
+            input,
+            "converted",
+            options.output_path.as_deref(),
+            options.output_directory.as_deref(),
+            "mp4",
+        )?;
         let plan = convert_encode_plan(metadata.as_ref());
         let args = vec![
             "-y".to_string(),

@@ -33,7 +33,16 @@
     Abort
 
   hitplayer_cleanup_sidecars:
+    Delete "$SMPROGRAMS\HitPlayer.lnk"
+    Delete "$SMPROGRAMS\HitPlayer\HitPlayer.lnk"
+    RMDir "$SMPROGRAMS\HitPlayer"
+    Delete "$DESKTOP\HitPlayer.lnk"
     Delete "$INSTDIR\ffmpeg.exe"
     Delete "$INSTDIR\ffprobe.exe"
     RMDir /r "$INSTDIR\resources"
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  DetailPrint "Refreshing HitPlayer shell icons..."
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0x0000, p 0, p 0)'
 !macroend

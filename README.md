@@ -25,6 +25,7 @@ The installer is current-user only, does not need admin rights, bundles FFmpeg/F
 - Precise trims with H.264/AAC when frame-accurate cuts matter.
 - Compresses with simple presets that target practical file sizes instead of bloating exports.
 - Converts odd files into compatible MP4 for easier sharing and playback.
+- Lets you choose a custom output folder from Settings.
 - Shows FFmpeg progress, speed, percent, logs, cancel, and output actions.
 - Registers itself as a Windows video app so you can pick it as the default player.
 
@@ -69,7 +70,7 @@ npm run tauri:build
 The installer is written to:
 
 ```text
-src-tauri\target\release\bundle\nsis\HitPlayer_0.1.6_x64-setup.exe
+src-tauri\target\release\bundle\nsis\HitPlayer_0.1.7_x64-setup.exe
 ```
 
 GitHub keeps normal push checks quick. The main build workflow runs the frontend build and Rust tests only. Full Windows installer builds run from the separate **Installer** workflow when started manually or when a `v*` release tag is pushed.
@@ -105,7 +106,7 @@ FFprobe was not found. Place ffprobe.exe in the required app binary folder.
 
 ## Output Files
 
-HitPlayer creates a `HitPlayerExports` folder beside the source video.
+By default, HitPlayer creates a `HitPlayerExports` folder beside the source video.
 
 Example:
 
@@ -123,6 +124,8 @@ C:\Videos\HitPlayerExports\clip_converted.mp4
 Existing outputs are never overwritten. HitPlayer adds `_001`, `_002`, and so on.
 
 Fast Trim keeps the source container when that is safer. For example, fast trimming `clip.mkv` writes `clip_trim_fast.mkv`. Re-encoded outputs use MP4.
+
+You can also set a custom output folder in **Settings > Output folder**. When that is set, every trim, compression, and conversion export uses that folder while keeping the same clear filenames.
 
 ## Compression Targets
 
@@ -164,7 +167,7 @@ Then build:
 npm run tauri:build
 ```
 
-Running a newer setup EXE updates the existing current-user install. The installer asks to close HitPlayer if it is running, clears stale app binaries/resources from the install folder, and then installs the new files. It does not touch exported videos or user media.
+Running a newer setup EXE updates the existing current-user install. The installer asks to close HitPlayer if it is running, clears stale app binaries/resources from the install folder, refreshes Windows shell icons, and then installs the new files. It does not touch exported videos or user media.
 
 For GitHub release builds, run the **Installer** workflow or push a version tag. This avoids rebuilding the full installer after every regular code change.
 

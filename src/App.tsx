@@ -17,6 +17,7 @@ import {
   fastTrim,
   getLaunchVideoPath,
   openDefaultPlayerSettings,
+  openOutputFolderDialog,
   openVideoDialog,
   preciseTrim,
   probeVideo,
@@ -27,6 +28,7 @@ import type { CompressionPreset, EncoderSupport, JobProgress, JobResult, VideoMe
 const SETTINGS_KEYS = {
   startInTheaterMode: "hitplayer.startInTheaterMode",
   defaultCompressionPreset: "hitplayer.defaultCompressionPreset",
+  outputDirectory: "hitplayer.outputDirectory",
 };
 
 const COMPRESSION_PRESETS: CompressionPreset[] = ["balanced", "small", "high_quality", "nvidia_fast"];
@@ -46,6 +48,15 @@ function storedPreset(): CompressionPreset {
     return COMPRESSION_PRESETS.includes(preset as CompressionPreset) ? (preset as CompressionPreset) : "balanced";
   } catch {
     return "balanced";
+  }
+}
+
+function storedString(key: string): string | null {
+  try {
+    const value = window.localStorage.getItem(key)?.trim();
+    return value ? value : null;
+  } catch {
+    return null;
   }
 }
 
@@ -96,6 +107,9 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [startInTheaterMode, setStartInTheaterMode] = useState(() =>
     storedBoolean(SETTINGS_KEYS.startInTheaterMode, false),
+  );
+  const [outputDirectory, setOutputDirectory] = useState<string | null>(() =>
+    storedString(SETTINGS_KEYS.outputDirectory),
   );
   const [defaultPlayerStatus, setDefaultPlayerStatus] = useState<string | null>(null);
   const loadedLaunchPath = useRef(false);
@@ -205,12 +219,17 @@ export default function App() {
     return selectedPath;
   }
 
+  function selectedOutputDirectory(): string | undefined {
+    return outputDirectory?.trim() || undefined;
+  }
+
   function handleFastTrim() {
     void runJob("Fast Trim", () =>
       fastTrim({
         inputPath: selectedVideoPath(),
         startSeconds: trimStart,
         endSeconds: trimEnd,
+        outputDirectory: selectedOutputDirectory(),
       }),
     );
   }
@@ -221,16 +240,21 @@ export default function App() {
         inputPath: selectedVideoPath(),
         startSeconds: trimStart,
         endSeconds: trimEnd,
+        outputDirectory: selectedOutputDirectory(),
       }),
     );
   }
 
   function handleCompress() {
-    void runJob("Compress Video", () => compressVideo(selectedVideoPath(), preset));
+    void runJob("Compress Video", () =>
+      compressVideo(selectedVideoPath(), preset, undefined, selectedOutputDirectory()),
+    );
   }
 
   function handleConvert() {
-    void runJob("Convert to Compatible MP4", () => convertToMp4(selectedVideoPath()));
+    void runJob("Convert to Compatible MP4", () =>
+      convertToMp4(selectedVideoPath(), undefined, selectedOutputDirectory()),
+    );
   }
 
   async function handleCancel() {
@@ -280,13 +304,43 @@ export default function App() {
     }
   }
 
+  async function handleChooseOutputDirectory() {
+    try {
+      setError(null);
+      const directory = await openOutputFolderDialog(outputDirectory);
+      if (!directory) {
+        return;
+      }
+
+      setOutputDirectory(directory);
+      try {
+        window.localStorage.setItem(SETTINGS_KEYS.outputDirectory, directory);
+      } catch {
+        // Ignore storage failures. The visible setting still works for this session.
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
+  function handleClearOutputDirectory() {
+    setOutputDirectory(null);
+    try {
+      window.localStorage.removeItem(SETTINGS_KEYS.outputDirectory);
+    } catch {
+      // Ignore storage failures. The visible setting still works for this session.
+    }
+  }
+
   function handleResetSettings() {
     handlePresetChange("balanced");
     setStartInTheaterMode(false);
     setTheaterMode(false);
+    setOutputDirectory(null);
     try {
       window.localStorage.removeItem(SETTINGS_KEYS.startInTheaterMode);
       window.localStorage.removeItem(SETTINGS_KEYS.defaultCompressionPreset);
+      window.localStorage.removeItem(SETTINGS_KEYS.outputDirectory);
     } catch {
       // Ignore storage failures.
     }
@@ -385,11 +439,14 @@ export default function App() {
         open={settingsOpen}
         startInTheaterMode={startInTheaterMode}
         defaultPreset={preset}
+        outputDirectory={outputDirectory}
         defaultPlayerStatus={defaultPlayerStatus}
         isBusy={isBusy}
         onClose={() => setSettingsOpen(false)}
         onStartInTheaterModeChange={handleStartInTheaterModeChange}
         onDefaultPresetChange={handlePresetChange}
+        onChooseOutputDirectory={handleChooseOutputDirectory}
+        onClearOutputDirectory={handleClearOutputDirectory}
         onOpenDefaultPlayerSettings={handleSetDefaultPlayer}
         onResetSettings={handleResetSettings}
       />
