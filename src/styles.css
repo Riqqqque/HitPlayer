@@ -23,6 +23,34 @@ input {
   font: inherit;
 }
 
+video.hit-video-preview {
+  object-fit: contain;
+}
+
+video.hit-video-preview:fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  border-radius: 0 !important;
+  background: #000;
+}
+
+video.hit-video-preview:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  border-radius: 0 !important;
+  background: #000;
+}
+
+video.hit-video-preview::backdrop {
+  background: #000;
+}
+
 @layer components {
   .primary-button {
     @apply inline-flex items-center justify-center rounded-lg bg-hit-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-hit-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400;
