@@ -313,6 +313,8 @@ export default function App() {
           durationSeconds={durationSeconds}
           previewFailed={previewFailed}
           theaterMode={theaterMode}
+          width={metadata?.width ?? null}
+          height={metadata?.height ?? null}
           onPreviewFailed={() => setPreviewFailed(true)}
           onTimeUpdate={setCurrentTime}
         />

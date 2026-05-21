@@ -1,5 +1,5 @@
 import { AlertCircle, Film } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { extensionFromPath, filenameFromPath, secondsToTimestamp } from "../lib/format";
 
 const PREVIEW_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
@@ -10,6 +10,8 @@ type VideoPlayerProps = {
   durationSeconds: number | null;
   previewFailed: boolean;
   theaterMode: boolean;
+  width: number | null;
+  height: number | null;
   onPreviewFailed: () => void;
   onTimeUpdate: (seconds: number) => void;
 };
@@ -24,11 +26,20 @@ export function VideoPlayer({
   durationSeconds,
   previewFailed,
   theaterMode,
+  width,
+  height,
   onPreviewFailed,
   onTimeUpdate,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canPreview = canTryPreview(filePath) && !!previewUrl && !previewFailed;
+  const aspectRatio = useMemo(() => {
+    if (width && height && width > 0 && height > 0) {
+      return `${width} / ${height}`;
+    }
+
+    return "16 / 9";
+  }, [height, width]);
 
   useEffect(() => {
     if (!videoRef.current || !previewUrl) {
@@ -48,35 +59,50 @@ export function VideoPlayer({
         <span className="text-xs text-slate-500">{secondsToTimestamp(durationSeconds)}</span>
       </div>
 
-      <div
-        className={`relative grid min-h-0 flex-1 place-items-center rounded-b-lg bg-black ${
-          theaterMode ? "overflow-visible px-3 pb-6 pt-3" : "overflow-hidden"
-        }`}
-      >
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-lg bg-black">
         {canPreview ? (
-          <video
-            ref={videoRef}
-            className="block h-full max-h-full w-full max-w-full rounded-md bg-black object-contain"
-            controls
-            preload="metadata"
-            onError={onPreviewFailed}
-            onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+          <div
+            className={
+              theaterMode
+                ? "absolute inset-x-4 bottom-12 top-4 flex items-center justify-center overflow-hidden"
+                : "absolute inset-0 flex items-center justify-center overflow-hidden"
+            }
           >
-            <source src={previewUrl ?? undefined} />
-          </video>
-        ) : (
-          <div className="mx-auto max-w-lg px-8 text-center">
-            <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-lg border border-white/10 bg-white/5 text-hit-300">
-              <AlertCircle size={30} />
+            <div
+              className={
+                theaterMode
+                  ? "flex h-full max-h-full max-w-full items-center justify-center"
+                  : "flex h-full w-full items-center justify-center"
+              }
+              style={theaterMode ? { aspectRatio } : undefined}
+            >
+              <video
+                ref={videoRef}
+                className="block h-full w-full rounded-md bg-black object-contain"
+                controls
+                preload="metadata"
+                onError={onPreviewFailed}
+                onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+              >
+                <source src={previewUrl ?? undefined} />
+              </video>
             </div>
-            <h2 className="text-lg font-semibold text-white">
-              {filePath ? "Preview is not available for this file." : "Open a video to get started."}
-            </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-400">
-              {filePath
-                ? "This file may not preview in HitPlayer yet, but FFmpeg can still process it."
-                : "Common MP4, MOV, WebM, and M4V files can preview here."}
-            </p>
+          </div>
+        ) : (
+          <div className="absolute inset-0 grid place-items-center">
+            <div className="mx-auto max-w-lg px-8 text-center">
+              <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-lg border border-white/10 bg-white/5 text-hit-300">
+                <AlertCircle size={30} />
+              </div>
+              <h2 className="text-lg font-semibold text-white">
+                {filePath ? "Preview is not available for this file." : "Open a video to get started."}
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">
+                {filePath
+                  ? "This file may not preview in HitPlayer yet, but FFmpeg can still process it."
+                  : "Common MP4, MOV, WebM, and M4V files can preview here."}
+              </p>
+            </div>
           </div>
         )}
       </div>
