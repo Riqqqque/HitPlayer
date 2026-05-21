@@ -1,15 +1,13 @@
-name: Build
+name: Installer
 
 on:
   push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
-  windows:
-    name: Windows fast check
+  windows-installer:
+    name: Windows installer
     runs-on: windows-2025-vs2026
 
     steps:
@@ -32,16 +30,22 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-installer-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-installer-
             ${{ runner.os }}-cargo-
 
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Typecheck and build frontend
-        run: npm run build
+      - name: Download FFmpeg sidecars
+        run: npm run setup:ffmpeg
 
-      - name: Test Rust backend
-        working-directory: src-tauri
-        run: cargo test
+      - name: Build Windows installer
+        run: npm run tauri:build
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: HitPlayer-Windows-Installer
+          path: src-tauri/target/release/bundle/nsis/*.exe
