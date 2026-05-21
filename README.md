@@ -69,7 +69,7 @@ npm run tauri:build
 The installer is written to:
 
 ```text
-src-tauri\target\release\bundle\nsis\HitPlayer_0.1.1_x64-setup.exe
+src-tauri\target\release\bundle\nsis\HitPlayer_0.1.2_x64-setup.exe
 ```
 
 ## FFmpeg Sidecars

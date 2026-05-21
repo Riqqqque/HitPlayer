@@ -5,6 +5,7 @@ import { ConvertPanel } from "./components/ConvertPanel";
 import { DefaultPlayerPanel } from "./components/DefaultPlayerPanel";
 import { FileInfoCard } from "./components/FileInfoCard";
 import { ProgressPanel } from "./components/ProgressPanel";
+import { SettingsMenu } from "./components/SettingsMenu";
 import { TopBar } from "./components/TopBar";
 import { TrimPanel } from "./components/TrimPanel";
 import { canTryPreview, VideoPlayer } from "./components/VideoPlayer";
@@ -22,6 +23,31 @@ import {
   toAssetUrl,
 } from "./lib/api";
 import type { CompressionPreset, EncoderSupport, JobProgress, JobResult, VideoMetadata } from "./lib/types";
+
+const SETTINGS_KEYS = {
+  startInTheaterMode: "hitplayer.startInTheaterMode",
+  defaultCompressionPreset: "hitplayer.defaultCompressionPreset",
+};
+
+const COMPRESSION_PRESETS: CompressionPreset[] = ["balanced", "small", "high_quality", "nvidia_fast"];
+
+function storedBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value == null ? fallback : value === "true";
+  } catch {
+    return fallback;
+  }
+}
+
+function storedPreset(): CompressionPreset {
+  try {
+    const preset = window.localStorage.getItem(SETTINGS_KEYS.defaultCompressionPreset);
+    return COMPRESSION_PRESETS.includes(preset as CompressionPreset) ? (preset as CompressionPreset) : "balanced";
+  } catch {
+    return "balanced";
+  }
+}
 
 function trimValidation(
   hasVideo: boolean,
@@ -59,14 +85,18 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
-  const [preset, setPreset] = useState<CompressionPreset>("balanced");
+  const [preset, setPreset] = useState<CompressionPreset>(() => storedPreset());
   const [jobName, setJobName] = useState("");
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
   const [detailsLog, setDetailsLog] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [theaterMode, setTheaterMode] = useState(false);
+  const [theaterMode, setTheaterMode] = useState(() => storedBoolean(SETTINGS_KEYS.startInTheaterMode, false));
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [startInTheaterMode, setStartInTheaterMode] = useState(() =>
+    storedBoolean(SETTINGS_KEYS.startInTheaterMode, false),
+  );
   const [defaultPlayerStatus, setDefaultPlayerStatus] = useState<string | null>(null);
   const loadedLaunchPath = useRef(false);
 
@@ -229,10 +259,44 @@ export default function App() {
     }
   }
 
+  function handlePresetChange(nextPreset: CompressionPreset) {
+    setPreset(nextPreset);
+    try {
+      window.localStorage.setItem(SETTINGS_KEYS.defaultCompressionPreset, nextPreset);
+    } catch {
+      // Ignore storage failures. The visible setting still works for this session.
+    }
+  }
+
+  function handleStartInTheaterModeChange(enabled: boolean) {
+    setStartInTheaterMode(enabled);
+    if (enabled) {
+      setTheaterMode(true);
+    }
+    try {
+      window.localStorage.setItem(SETTINGS_KEYS.startInTheaterMode, String(enabled));
+    } catch {
+      // Ignore storage failures. The visible setting still works for this session.
+    }
+  }
+
+  function handleResetSettings() {
+    handlePresetChange("balanced");
+    setStartInTheaterMode(false);
+    setTheaterMode(false);
+    try {
+      window.localStorage.removeItem(SETTINGS_KEYS.startInTheaterMode);
+      window.localStorage.removeItem(SETTINGS_KEYS.defaultCompressionPreset);
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-ink-950 text-slate-100">
       <TopBar
         onOpenVideo={handleOpenVideo}
+        onOpenSettings={() => setSettingsOpen(true)}
         isBusy={isBusy}
         theaterMode={theaterMode}
         onToggleTheaterMode={() => setTheaterMode((enabled) => !enabled)}
@@ -248,6 +312,7 @@ export default function App() {
           previewUrl={previewUrl}
           durationSeconds={durationSeconds}
           previewFailed={previewFailed}
+          theaterMode={theaterMode}
           onPreviewFailed={() => setPreviewFailed(true)}
           onTimeUpdate={setCurrentTime}
         />
@@ -282,7 +347,7 @@ export default function App() {
             encoders={encoders}
             hasVideo={hasVideo}
             isBusy={isBusy}
-            onPresetChange={setPreset}
+            onPresetChange={handlePresetChange}
             onCompress={handleCompress}
           />
 
@@ -313,6 +378,19 @@ export default function App() {
           onError={setError}
         />
       </div>
+
+      <SettingsMenu
+        open={settingsOpen}
+        startInTheaterMode={startInTheaterMode}
+        defaultPreset={preset}
+        defaultPlayerStatus={defaultPlayerStatus}
+        isBusy={isBusy}
+        onClose={() => setSettingsOpen(false)}
+        onStartInTheaterModeChange={handleStartInTheaterModeChange}
+        onDefaultPresetChange={handlePresetChange}
+        onOpenDefaultPlayerSettings={handleSetDefaultPlayer}
+        onResetSettings={handleResetSettings}
+      />
     </div>
   );
 }

@@ -9,6 +9,7 @@ type VideoPlayerProps = {
   previewUrl: string | null;
   durationSeconds: number | null;
   previewFailed: boolean;
+  theaterMode: boolean;
   onPreviewFailed: () => void;
   onTimeUpdate: (seconds: number) => void;
 };
@@ -22,6 +23,7 @@ export function VideoPlayer({
   previewUrl,
   durationSeconds,
   previewFailed,
+  theaterMode,
   onPreviewFailed,
   onTimeUpdate,
 }: VideoPlayerProps) {
@@ -46,11 +48,15 @@ export function VideoPlayer({
         <span className="text-xs text-slate-500">{secondsToTimestamp(durationSeconds)}</span>
       </div>
 
-      <div className="relative grid min-h-0 flex-1 place-items-center overflow-hidden rounded-b-lg bg-black">
+      <div
+        className={`relative grid min-h-0 flex-1 place-items-center rounded-b-lg bg-black ${
+          theaterMode ? "overflow-visible px-3 pb-6 pt-3" : "overflow-hidden"
+        }`}
+      >
         {canPreview ? (
           <video
             ref={videoRef}
-            className="block h-full w-full bg-black object-contain"
+            className="block h-full max-h-full w-full max-w-full rounded-md bg-black object-contain"
             controls
             preload="metadata"
             onError={onPreviewFailed}
