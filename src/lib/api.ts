@@ -11,6 +11,10 @@ export function openVideoDialog(): Promise<string | null> {
   return invoke("open_video_dialog");
 }
 
+export function openOutputFolderDialog(currentPath?: string | null): Promise<string | null> {
+  return invoke("open_output_folder_dialog", { currentPath });
+}
+
 export function getLaunchVideoPath(): Promise<string | null> {
   return invoke("get_launch_video_path");
 }
@@ -35,12 +39,17 @@ export function compressVideo(
   inputPath: string,
   preset: CompressionPreset,
   outputPath?: string,
+  outputDirectory?: string,
 ): Promise<JobResult> {
-  return invoke("compress_video", { options: { inputPath, preset, outputPath } });
+  return invoke("compress_video", { options: { inputPath, preset, outputPath, outputDirectory } });
 }
 
-export function convertToMp4(inputPath: string, outputPath?: string): Promise<JobResult> {
-  return invoke("convert_to_mp4", { options: { inputPath, outputPath } });
+export function convertToMp4(
+  inputPath: string,
+  outputPath?: string,
+  outputDirectory?: string,
+): Promise<JobResult> {
+  return invoke("convert_to_mp4", { options: { inputPath, outputPath, outputDirectory } });
 }
 
 export function cancelJob(): Promise<void> {

@@ -57,32 +57,36 @@ fn binary_candidates(app: &AppHandle, name: &str) -> Vec<PathBuf> {
 pub fn default_output_path(
     input: &Path,
     suffix: &str,
-    requested: Option<&str>,
+    requested_file: Option<&str>,
+    requested_directory: Option<&str>,
     default_extension: &str,
 ) -> Result<PathBuf, String> {
     let input_parent = input
         .parent()
         .ok_or_else(|| "Output path is invalid.".to_string())?;
+    let output_name = default_output_name(input, suffix, default_extension)?;
 
-    let requested_path = requested
+    let requested_file = requested_file
         .map(|path| PathBuf::from(path.trim()))
         .filter(|path| !path.as_os_str().is_empty());
-    let output = if let Some(path) = requested_path {
+    let requested_directory = requested_directory
+        .map(|path| PathBuf::from(path.trim()))
+        .filter(|path| !path.as_os_str().is_empty());
+
+    let output = if let Some(path) = requested_file {
         if path.extension().is_none() {
             path.with_extension(default_extension)
         } else {
             path
         }
-    } else {
-        let stem = input
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .filter(|stem| !stem.trim().is_empty())
-            .ok_or_else(|| "Output path is invalid.".to_string())?;
+    } else if let Some(directory) = requested_directory {
+        if directory.exists() && !directory.is_dir() {
+            return Err("Output path is invalid.".to_string());
+        }
 
-        input_parent
-            .join("HitPlayerExports")
-            .join(format!("{stem}_{suffix}.{default_extension}"))
+        directory.join(output_name)
+    } else {
+        input_parent.join("HitPlayerExports").join(output_name)
     };
 
     if is_same_path(input, &output) {
@@ -97,6 +101,20 @@ pub fn default_output_path(
     }
 
     Ok(unique)
+}
+
+fn default_output_name(
+    input: &Path,
+    suffix: &str,
+    default_extension: &str,
+) -> Result<String, String> {
+    let stem = input
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.trim().is_empty())
+        .ok_or_else(|| "Output path is invalid.".to_string())?;
+
+    Ok(format!("{stem}_{suffix}.{default_extension}"))
 }
 
 fn unique_output_path(path: PathBuf) -> PathBuf {
@@ -123,6 +141,67 @@ fn unique_output_path(path: PathBuf) -> PathBuf {
     }
 
     parent.join(format!("{stem}_{}.{}", uuid::Uuid::new_v4(), extension))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_root() -> PathBuf {
+        std::env::temp_dir().join(format!("hitplayer-path-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn default_output_uses_exports_folder_without_custom_directory() {
+        let root = temp_root();
+        let input = root.join("clip.mp4");
+        let output = default_output_path(&input, "trim_fast", None, None, "mp4").unwrap();
+
+        assert_eq!(
+            output,
+            root.join("HitPlayerExports").join("clip_trim_fast.mp4")
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn default_output_uses_custom_directory_when_set() {
+        let root = temp_root();
+        let input = root.join("clip.mp4");
+        let output_dir = root.join("Custom Exports");
+        let output = default_output_path(
+            &input,
+            "compressed_small",
+            None,
+            Some(output_dir.to_string_lossy().as_ref()),
+            "mp4",
+        )
+        .unwrap();
+
+        assert_eq!(output, output_dir.join("clip_compressed_small.mp4"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_output_file_still_works() {
+        let root = temp_root();
+        let input = root.join("clip.mp4");
+        let requested_file = root.join("custom");
+        let output = default_output_path(
+            &input,
+            "converted",
+            Some(requested_file.to_string_lossy().as_ref()),
+            None,
+            "mp4",
+        )
+        .unwrap();
+
+        assert_eq!(output, root.join("custom.mp4"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 fn is_same_path(left: &Path, right: &Path) -> bool {

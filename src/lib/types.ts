@@ -57,4 +57,5 @@ export type TrimOptions = {
   startSeconds: number;
   endSeconds: number;
   outputPath?: string;
+  outputDirectory?: string;
 };

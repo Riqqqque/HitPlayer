@@ -1,6 +1,6 @@
 [package]
 name = "hitplayer"
-version = "0.1.6"
+version = "0.1.7"
 description = "A Windows media player and FFmpeg video utility."
 authors = ["Rique"]
 edition = "2021"

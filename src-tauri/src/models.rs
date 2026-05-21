@@ -77,6 +77,7 @@ pub struct TrimOptions {
     pub start_seconds: f64,
     pub end_seconds: f64,
     pub output_path: Option<String>,
+    pub output_directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,6 +86,7 @@ pub struct CompressOptions {
     pub input_path: String,
     pub preset: CompressionPreset,
     pub output_path: Option<String>,
+    pub output_directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +94,7 @@ pub struct CompressOptions {
 pub struct ConvertOptions {
     pub input_path: String,
     pub output_path: Option<String>,
+    pub output_directory: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

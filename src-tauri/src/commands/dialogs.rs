@@ -13,6 +13,25 @@ pub fn open_video_dialog() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub fn open_output_folder_dialog(current_path: Option<String>) -> Result<Option<String>, String> {
+    let mut dialog = rfd::FileDialog::new().set_title("Choose Output Folder");
+
+    if let Some(path) = current_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_dir())
+    {
+        dialog = dialog.set_directory(path);
+    }
+
+    Ok(dialog
+        .pick_folder()
+        .map(|path| path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
 pub fn get_launch_video_path() -> Result<Option<String>, String> {
     let picked = std::env::args_os()
         .skip(1)

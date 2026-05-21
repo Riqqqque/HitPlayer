@@ -1,15 +1,18 @@
-import { RotateCcw, Settings, X } from "lucide-react";
+import { FolderOpen, RotateCcw, Settings, X } from "lucide-react";
 import type { CompressionPreset } from "../lib/types";
 
 type SettingsMenuProps = {
   open: boolean;
   startInTheaterMode: boolean;
   defaultPreset: CompressionPreset;
+  outputDirectory: string | null;
   defaultPlayerStatus: string | null;
   isBusy: boolean;
   onClose: () => void;
   onStartInTheaterModeChange: (enabled: boolean) => void;
   onDefaultPresetChange: (preset: CompressionPreset) => void;
+  onChooseOutputDirectory: () => void;
+  onClearOutputDirectory: () => void;
   onOpenDefaultPlayerSettings: () => void;
   onResetSettings: () => void;
 };
@@ -25,11 +28,14 @@ export function SettingsMenu({
   open,
   startInTheaterMode,
   defaultPreset,
+  outputDirectory,
   defaultPlayerStatus,
   isBusy,
   onClose,
   onStartInTheaterModeChange,
   onDefaultPresetChange,
+  onChooseOutputDirectory,
+  onClearOutputDirectory,
   onOpenDefaultPlayerSettings,
   onResetSettings,
 }: SettingsMenuProps) {
@@ -86,6 +92,42 @@ export function SettingsMenu({
               ))}
             </select>
           </label>
+
+          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-100">Output folder</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {outputDirectory ? "Exports use this folder." : "Exports go beside the source video."}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={onChooseOutputDirectory}
+                  disabled={isBusy}
+                >
+                  <FolderOpen size={15} />
+                  Choose
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={onClearOutputDirectory}
+                  disabled={isBusy || !outputDirectory}
+                >
+                  <X size={15} />
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-300">
+              <span className="block break-all">
+                {outputDirectory ?? "HitPlayerExports folder next to each source video"}
+              </span>
+            </div>
+          </div>
 
           <div className="rounded-lg border border-white/10 bg-black/20 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
