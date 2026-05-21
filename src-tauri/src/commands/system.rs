@@ -13,21 +13,9 @@ pub fn register_default_player() -> Result<(), String> {
 #[tauri::command]
 pub fn open_default_player_settings() -> Result<(), String> {
     register_default_player_internal()?;
-    command_no_window("explorer.exe")
-        .arg("ms-settings:defaultapps?registeredAppUser=HitPlayer")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .or_else(|_| {
-            command_no_window("explorer.exe")
-                .arg("ms-settings:defaultapps")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-        })
-        .map_err(|error| format!("Could not open Windows Default Apps settings: {error}"))?;
-
-    Ok(())
+    open_system_uri("ms-settings:defaultapps?registeredAppUser=HitPlayer")
+        .or_else(|_| open_system_uri("ms-settings:defaultapps"))
+        .map_err(|error| format!("Could not open Windows Default Apps settings: {error}"))
 }
 
 #[tauri::command]
@@ -176,6 +164,44 @@ fn register_default_player_internal() -> Result<(), String> {
 #[cfg(not(windows))]
 fn register_default_player_internal() -> Result<(), String> {
     Err("Default player registration is only supported on Windows.".to_string())
+}
+
+#[cfg(windows)]
+fn open_system_uri(uri: &str) -> Result<(), String> {
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let operation = wide_null("open");
+    let target = wide_null(uri);
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+
+    if result as isize <= 32 {
+        Err("Windows could not open Default Apps settings.".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn wide_null(value: &str) -> Vec<u16> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    OsStr::new(value).encode_wide().chain([0]).collect()
+}
+
+#[cfg(not(windows))]
+fn open_system_uri(_uri: &str) -> Result<(), String> {
+    Err("Default Apps settings are only available on Windows.".to_string())
 }
 
 fn command_no_window(program: &str) -> Command {
