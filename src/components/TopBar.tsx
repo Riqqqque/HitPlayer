@@ -1,13 +1,20 @@
-import { FolderOpen, Maximize2, Minimize2 } from "lucide-react";
+import { FolderOpen, Maximize2, Minimize2, Settings } from "lucide-react";
 
 type TopBarProps = {
   onOpenVideo: () => void;
+  onOpenSettings: () => void;
   isBusy: boolean;
   theaterMode: boolean;
   onToggleTheaterMode: () => void;
 };
 
-export function TopBar({ onOpenVideo, isBusy, theaterMode, onToggleTheaterMode }: TopBarProps) {
+export function TopBar({
+  onOpenVideo,
+  onOpenSettings,
+  isBusy,
+  theaterMode,
+  onToggleTheaterMode,
+}: TopBarProps) {
   return (
     <header className="flex items-center justify-between border-b border-white/10 bg-ink-950/92 px-6 py-4 backdrop-blur">
       <div className="flex items-center gap-3">
@@ -21,6 +28,15 @@ export function TopBar({ onOpenVideo, isBusy, theaterMode, onToggleTheaterMode }
       </div>
 
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="secondary-button h-10 w-10 px-0"
+          title="Settings"
+          aria-label="Settings"
+        >
+          <Settings size={17} />
+        </button>
         <button type="button" onClick={onToggleTheaterMode} className="secondary-button">
           {theaterMode ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
           {theaterMode ? "Exit Theater" : "Theater"}
