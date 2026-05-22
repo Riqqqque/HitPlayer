@@ -1,4 +1,4 @@
-import { AlertCircle, Film } from "lucide-react";
+import { AlertCircle, Film, LoaderCircle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { extensionFromPath, filenameFromPath, secondsToTimestamp } from "../lib/format";
 
@@ -7,6 +7,8 @@ const PREVIEW_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
 type VideoPlayerProps = {
   filePath: string | null;
   previewUrl: string | null;
+  previewState: "idle" | "native" | "preparing" | "ready" | "failed";
+  previewMessage: string | null;
   durationSeconds: number | null;
   previewFailed: boolean;
   theaterMode: boolean;
@@ -23,6 +25,8 @@ export function canTryPreview(path: string | null): boolean {
 export function VideoPlayer({
   filePath,
   previewUrl,
+  previewState,
+  previewMessage,
   durationSeconds,
   previewFailed,
   theaterMode,
@@ -35,7 +39,7 @@ export function VideoPlayer({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [intrinsicSize, setIntrinsicSize] = useState<{ width: number; height: number } | null>(null);
-  const canPreview = canTryPreview(filePath) && !!previewUrl && !previewFailed;
+  const canPreview = !!previewUrl && !previewFailed;
 
   const aspectRatio = useMemo(() => {
     const mediaWidth = width && width > 0 ? width : intrinsicSize?.width;
@@ -156,15 +160,24 @@ export function VideoPlayer({
           <div className="absolute inset-0 grid place-items-center">
             <div className="mx-auto max-w-lg px-8 text-center">
               <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-lg border border-white/10 bg-white/5 text-hit-300">
-                <AlertCircle size={30} />
+                {previewState === "preparing" ? (
+                  <LoaderCircle size={30} className="animate-spin" />
+                ) : (
+                  <AlertCircle size={30} />
+                )}
               </div>
               <h2 className="text-lg font-semibold text-white">
-                {filePath ? "Preview is not available for this file." : "Open a video to get started."}
+                {filePath
+                  ? previewState === "preparing"
+                    ? "Preparing playable preview..."
+                    : "Preview is not available for this file."
+                  : "Open a video to get started."}
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-400">
                 {filePath
-                  ? "This file may not preview in HitPlayer yet, but FFmpeg can still process it."
-                  : "Common MP4, MOV, WebM, and M4V files can preview here."}
+                  ? previewMessage ??
+                    "This file may not preview in HitPlayer yet, but FFmpeg can still process it."
+                  : "Common MP4, MOV, WebM, M4V, and FFmpeg-prepared MKV previews can play here."}
               </p>
             </div>
           </div>

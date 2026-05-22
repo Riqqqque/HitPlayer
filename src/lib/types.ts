@@ -52,6 +52,13 @@ export type JobResult = {
   error?: string | null;
 };
 
+export type PreviewResult = {
+  previewPath: string;
+  usedCachedFile: boolean;
+  method: "stream_copy" | "transcode" | string;
+  log: string;
+};
+
 export type TrimOptions = {
   inputPath: string;
   startSeconds: number;

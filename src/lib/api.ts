@@ -3,6 +3,7 @@ import type {
   CompressionPreset,
   EncoderSupport,
   JobResult,
+  PreviewResult,
   TrimOptions,
   VideoMetadata,
 } from "./types";
@@ -25,6 +26,10 @@ export function probeVideo(path: string): Promise<VideoMetadata> {
 
 export function detectEncoders(): Promise<EncoderSupport> {
   return invoke("detect_encoders");
+}
+
+export function preparePreview(path: string, forceTranscode = false): Promise<PreviewResult> {
+  return invoke("prepare_preview", { path, forceTranscode });
 }
 
 export function fastTrim(options: TrimOptions): Promise<JobResult> {

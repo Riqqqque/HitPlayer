@@ -4,7 +4,7 @@
 
 **Play it. Cut it. Compress it.**
 
-HitPlayer is a dark, clean Windows media player and FFmpeg-powered video utility. It is built for normal desktop use first: open a video, preview it when Windows WebView supports it, trim it, shrink it, convert it, and get back to the output without fighting command lines.
+HitPlayer is a dark, clean Windows media player and FFmpeg-powered video utility. It is built for normal desktop use first: open a video, preview it directly or through a local FFmpeg-prepared preview, trim it, shrink it, convert it, and get back to the output without fighting command lines.
 
 [![Build](https://github.com/Riqqqque/HitPlayer/actions/workflows/build.yml/badge.svg)](https://github.com/Riqqqque/HitPlayer/actions/workflows/build.yml)
 
@@ -18,7 +18,8 @@ The installer is current-user only, does not need admin rights, bundles FFmpeg/F
 
 - Opens common video files: MP4, MKV, MOV, AVI, WebM, M4V, FLV, WMV, TS, and M2TS.
 - Previews MP4, MOV, WebM, and M4V through the built-in Windows WebView video engine.
-- Still processes files with FFmpeg even when the preview engine cannot display them.
+- Prepares a local MP4 preview for MKV and other files WebView cannot play directly, including files opened from mapped or UNC network drives.
+- Still processes the original file with FFmpeg even when a local preview copy is needed.
 - Shows real metadata from FFprobe: duration, resolution, codecs, container, bitrate, and file size.
 - Sets start/end trim points from playback or manual timestamps.
 - Fast trims with stream copy, keeping quality and avoiding re-encoding.
@@ -70,7 +71,7 @@ npm run tauri:build
 The installer is written to:
 
 ```text
-src-tauri\target\release\bundle\nsis\HitPlayer_0.1.8_x64-setup.exe
+src-tauri\target\release\bundle\nsis\HitPlayer_0.1.9_x64-setup.exe
 ```
 
 GitHub keeps normal push checks quick. The main build workflow runs the frontend build and Rust tests only. Full Windows installer builds run from the separate **Installer** workflow when started manually or when a `v*` release tag is pushed.
@@ -173,8 +174,8 @@ For GitHub release builds, run the **Installer** workflow or push a version tag.
 
 ## Known Limitations
 
-- V1 preview uses the Windows WebView/browser video engine, so it will not preview every format.
-- FFmpeg processing supports many more formats than preview.
+- V1 preview uses the Windows WebView/browser video engine first, so some containers need a local MP4 preview cache before they play.
+- FFmpeg processing supports many more formats than direct browser preview.
 - Fast Trim is not always frame-perfect because it stream-copies.
 - Fast Trim only shrinks by cutting duration because it does not re-encode.
 - Precise Trim is slower because it re-encodes.
