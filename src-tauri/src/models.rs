@@ -70,6 +70,15 @@ pub struct JobResult {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewResult {
+    pub preview_path: String,
+    pub used_cached_file: bool,
+    pub method: String,
+    pub log: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrimOptions {

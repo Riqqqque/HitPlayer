@@ -18,6 +18,7 @@ import {
   openDefaultPlayerSettings,
   openOutputFolderDialog,
   openVideoDialog,
+  preparePreview,
   preciseTrim,
   probeVideo,
   toAssetUrl,
@@ -31,6 +32,8 @@ const SETTINGS_KEYS = {
 };
 
 const COMPRESSION_PRESETS: CompressionPreset[] = ["balanced", "small", "high_quality", "nvidia_fast"];
+type PreviewState = "idle" | "native" | "preparing" | "ready" | "failed";
+type PreviewSource = "native" | "stream_copy" | "transcode" | null;
 
 function storedBoolean(key: string, fallback: boolean): boolean {
   try {
@@ -91,6 +94,9 @@ export default function App() {
   const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const [encoders, setEncoders] = useState<EncoderSupport | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewState, setPreviewState] = useState<PreviewState>("idle");
+  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  const [previewSource, setPreviewSource] = useState<PreviewSource>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
@@ -112,6 +118,7 @@ export default function App() {
   );
   const [defaultPlayerStatus, setDefaultPlayerStatus] = useState<string | null>(null);
   const loadedLaunchPath = useRef(false);
+  const loadRequestId = useRef(0);
 
   const durationSeconds = metadata?.durationSeconds ?? null;
   const hasVideo = !!selectedPath && !!metadata;
@@ -158,9 +165,65 @@ export default function App() {
       });
   }, []);
 
+  async function preparePreviewForPath(path: string, requestId: number, forceTranscode: boolean) {
+    setPreviewFailed(false);
+    setPreviewUrl(null);
+    setPreviewState("preparing");
+    setPreviewSource(null);
+    setPreviewMessage(
+      forceTranscode
+        ? "HitPlayer is building a fully compatible local MP4 preview from the original file."
+        : "HitPlayer is preparing a local MP4 preview so this file can play here.",
+    );
+    setIsBusy(true);
+    setJobName("Preparing Preview");
+    setProgress(null);
+    setResult(null);
+    setDetailsLog("");
+
+    try {
+      const preview = await preparePreview(path, forceTranscode);
+      if (requestId !== loadRequestId.current) {
+        return;
+      }
+
+      setPreviewUrl(toAssetUrl(preview.previewPath));
+      setPreviewState("ready");
+      setPreviewSource(preview.method === "stream_copy" ? "stream_copy" : "transcode");
+      setPreviewMessage(
+        preview.usedCachedFile
+          ? "Using the cached local preview. Exports still use the original video."
+          : "Preview ready. Exports still use the original video.",
+      );
+      setDetailsLog(preview.log);
+    } catch (err) {
+      if (requestId !== loadRequestId.current) {
+        return;
+      }
+
+      setPreviewFailed(true);
+      setPreviewUrl(null);
+      setPreviewState("failed");
+      setPreviewSource(null);
+      setPreviewMessage("This file cannot be previewed yet, but FFmpeg can still process it.");
+      setError(String(err));
+    } finally {
+      if (requestId === loadRequestId.current) {
+        setIsBusy(false);
+      }
+    }
+  }
+
   async function loadVideo(path: string) {
+    const requestId = loadRequestId.current + 1;
+    loadRequestId.current = requestId;
+
     setSelectedPath(path);
     setMetadata(null);
+    setPreviewUrl(null);
+    setPreviewState("idle");
+    setPreviewSource(null);
+    setPreviewMessage(null);
     setPreviewFailed(false);
     setCurrentTime(0);
     setTrimStart(0);
@@ -170,9 +233,21 @@ export default function App() {
     setDetailsLog("");
 
     const info = await probeVideo(path);
+    if (requestId !== loadRequestId.current) {
+      return;
+    }
+
     setMetadata(info);
     setTrimEnd(info.durationSeconds ?? 0);
-    setPreviewUrl(canTryPreview(path) ? toAssetUrl(path) : null);
+
+    if (canTryPreview(path)) {
+      setPreviewState("native");
+      setPreviewSource("native");
+      setPreviewMessage(null);
+      setPreviewUrl(toAssetUrl(path));
+    } else {
+      await preparePreviewForPath(path, requestId, false);
+    }
   }
 
   async function handleOpenVideo() {
@@ -270,6 +345,18 @@ export default function App() {
     }
   }
 
+  function handlePreviewFailed() {
+    setPreviewFailed(true);
+
+    if (selectedPath && previewSource !== "transcode") {
+      void preparePreviewForPath(selectedPath, loadRequestId.current, true);
+      return;
+    }
+
+    setPreviewState("failed");
+    setPreviewMessage("This file cannot be previewed yet, but FFmpeg can still process it.");
+  }
+
   async function handleSetDefaultPlayer() {
     try {
       setError(null);
@@ -363,12 +450,14 @@ export default function App() {
         <VideoPlayer
           filePath={selectedPath}
           previewUrl={previewUrl}
+          previewState={previewState}
+          previewMessage={previewMessage}
           durationSeconds={durationSeconds}
           previewFailed={previewFailed}
           theaterMode={theaterMode}
           width={metadata?.width ?? null}
           height={metadata?.height ?? null}
-          onPreviewFailed={() => setPreviewFailed(true)}
+          onPreviewFailed={handlePreviewFailed}
           onTimeUpdate={setCurrentTime}
         />
 

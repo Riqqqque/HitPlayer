@@ -1,19 +1,45 @@
 use crate::commands::ffprobe::probe_video_internal;
 use crate::commands::jobs::{path_arg, run_ffmpeg_job, FfmpegJob, JobManager};
 use crate::models::{
-    CompressOptions, CompressionPreset, ConvertOptions, EncoderSupport, JobResult, TrimOptions,
-    VideoMetadata,
+    CompressOptions, CompressionPreset, ConvertOptions, EncoderSupport, JobResult, PreviewResult,
+    TrimOptions, VideoMetadata,
 };
 use crate::paths::{binary_path, default_output_path};
+use std::collections::hash_map::DefaultHasher;
+use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
+
+const PREVIEW_CACHE_DAYS: u64 = 7;
 
 #[tauri::command]
 pub async fn detect_encoders(app: AppHandle) -> Result<EncoderSupport, String> {
     tauri::async_runtime::spawn_blocking(move || detect_encoders_internal(&app))
         .await
         .map_err(|error| format!("Could not detect encoders: {error}"))?
+}
+
+#[tauri::command]
+pub async fn prepare_preview(
+    app: AppHandle,
+    state: State<'_, JobManager>,
+    path: String,
+    force_transcode: Option<bool>,
+) -> Result<PreviewResult, String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        prepare_preview_internal(
+            &app,
+            manager,
+            Path::new(&path),
+            force_transcode.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|error| format!("Preview preparation failed: {error}"))?
 }
 
 #[tauri::command]
@@ -310,6 +336,131 @@ pub fn detect_encoders_internal(app: &AppHandle) -> Result<EncoderSupport, Strin
     })
 }
 
+fn prepare_preview_internal(
+    app: &AppHandle,
+    manager: JobManager,
+    input: &Path,
+    force_transcode: bool,
+) -> Result<PreviewResult, String> {
+    if !input.is_file() {
+        return Err(
+            "Could not open this video. Check that the network drive is connected and the file is still available."
+                .to_string(),
+        );
+    }
+
+    let metadata = probe_video_internal(app, input)?;
+    let can_copy_video = !force_transcode
+        && metadata
+            .video_codec
+            .as_deref()
+            .is_some_and(|codec| codec.eq_ignore_ascii_case("h264"));
+    let method = if can_copy_video {
+        "stream_copy"
+    } else {
+        "transcode"
+    };
+    let output_path = preview_cache_path(input, method)?;
+
+    cleanup_preview_cache(output_path.parent().unwrap_or_else(|| Path::new("")));
+
+    if output_path.is_file()
+        && output_path
+            .metadata()
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false)
+    {
+        return Ok(PreviewResult {
+            preview_path: output_path.to_string_lossy().to_string(),
+            used_cached_file: true,
+            method: method.to_string(),
+            log: String::new(),
+        });
+    }
+
+    let _ = fs::remove_file(&output_path);
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create preview cache: {error}"))?;
+    }
+
+    let mut args = vec![
+        "-y".to_string(),
+        "-i".to_string(),
+        path_arg(input),
+        "-map".to_string(),
+        "0:v:0".to_string(),
+        "-map".to_string(),
+        "0:a?".to_string(),
+        "-sn".to_string(),
+        "-dn".to_string(),
+    ];
+
+    if can_copy_video {
+        args.extend([
+            "-c:v".to_string(),
+            "copy".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "128k".to_string(),
+        ]);
+    } else {
+        args.extend([
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-preset".to_string(),
+            "veryfast".to_string(),
+            "-crf".to_string(),
+            "23".to_string(),
+            "-pix_fmt".to_string(),
+            "yuv420p".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "128k".to_string(),
+        ]);
+    }
+
+    args.extend([
+        "-movflags".to_string(),
+        "+faststart".to_string(),
+        "-progress".to_string(),
+        "pipe:1".to_string(),
+        "-nostats".to_string(),
+        path_arg(&output_path),
+    ]);
+
+    let result = run_ffmpeg_job(
+        app.clone(),
+        manager,
+        FfmpegJob {
+            name: "Preparing Preview".to_string(),
+            args,
+            output_path: output_path.clone(),
+            total_duration: metadata.duration_seconds,
+        },
+    )?;
+
+    if result.canceled {
+        return Err("Preview preparation was canceled.".to_string());
+    }
+
+    if !result.success {
+        let _ = fs::remove_file(&output_path);
+        return Err(
+            "This file cannot be previewed yet, but FFmpeg can still process it.".to_string(),
+        );
+    }
+
+    Ok(PreviewResult {
+        preview_path: output_path.to_string_lossy().to_string(),
+        used_cached_file: false,
+        method: method.to_string(),
+        log: result.log,
+    })
+}
+
 fn validate_trim(
     app: &AppHandle,
     input: &Path,
@@ -520,6 +671,81 @@ fn command_no_window(program: std::path::PathBuf) -> Command {
         command.creation_flags(0x08000000);
     }
     command
+}
+
+fn preview_cache_path(input: &Path, method: &str) -> Result<std::path::PathBuf, String> {
+    let key = preview_cache_key(input);
+    let stem = input
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(safe_cache_stem)
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "video".to_string());
+    let cache_dir = std::env::temp_dir().join("HitPlayer").join("PreviewCache");
+
+    if cache_dir.as_os_str().is_empty() {
+        return Err("Could not create preview cache.".to_string());
+    }
+
+    Ok(cache_dir.join(format!("{stem}_{method}_{key}.mp4")))
+}
+
+fn preview_cache_key(input: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    input.to_string_lossy().to_lowercase().hash(&mut hasher);
+
+    if let Ok(metadata) = input.metadata() {
+        metadata.len().hash(&mut hasher);
+        if let Ok(modified) = metadata.modified() {
+            if let Ok(elapsed) = modified.duration_since(UNIX_EPOCH) {
+                elapsed.as_secs().hash(&mut hasher);
+                elapsed.subsec_nanos().hash(&mut hasher);
+            }
+        }
+    }
+
+    format!("{:016x}", hasher.finish())
+}
+
+fn safe_cache_stem(stem: &str) -> String {
+    stem.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn cleanup_preview_cache(cache_dir: &Path) {
+    let Ok(entries) = fs::read_dir(cache_dir) else {
+        return;
+    };
+    let cutoff = Duration::from_secs(PREVIEW_CACHE_DAYS * 24 * 60 * 60);
+    let now = SystemTime::now();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_preview = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"));
+        if !is_preview {
+            continue;
+        }
+
+        let is_old = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age > cutoff);
+        if is_old {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 #[cfg(test)]

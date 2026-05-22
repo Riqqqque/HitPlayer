@@ -4,7 +4,9 @@ mod commands;
 mod models;
 mod paths;
 
-use commands::ffmpeg::{compress_video, convert_to_mp4, detect_encoders, fast_trim, precise_trim};
+use commands::ffmpeg::{
+    compress_video, convert_to_mp4, detect_encoders, fast_trim, precise_trim, prepare_preview,
+};
 use commands::ffprobe::probe_video;
 use commands::jobs::{cancel_job, JobManager};
 use commands::system::{open_output_folder, reveal_output_file};
@@ -28,6 +30,7 @@ fn main() {
             commands::dialogs::get_launch_video_path,
             probe_video,
             detect_encoders,
+            prepare_preview,
             fast_trim,
             precise_trim,
             compress_video,
