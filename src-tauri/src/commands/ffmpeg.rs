@@ -397,14 +397,8 @@ fn prepare_preview_internal(
     ];
 
     if can_copy_video {
-        args.extend([
-            "-c:v".to_string(),
-            "copy".to_string(),
-            "-c:a".to_string(),
-            "aac".to_string(),
-            "-b:a".to_string(),
-            "128k".to_string(),
-        ]);
+        args.extend(["-c:v".to_string(), "copy".to_string()]);
+        args.extend(preview_audio_args(metadata.audio_codec.as_deref()));
     } else {
         args.extend([
             "-c:v".to_string(),
@@ -590,8 +584,8 @@ fn compression_encode_plan(
 fn trim_encode_plan(metadata: &VideoMetadata) -> EncodePlan {
     let source_bitrate = source_bitrate_bps(Some(metadata))
         .unwrap_or_else(|| resolution_default_bitrate(metadata.width, metadata.height, 3_000_000));
-    let total_bps = ((source_bitrate as f64) * 0.82) as u64;
-    encode_plan_from_total(total_bps.clamp(600_000, 5_000_000), 128_000)
+    let total_bps = capped_reencode_total(source_bitrate, 0.82, 600_000, 5_000_000);
+    encode_plan_from_total(total_bps, 128_000)
 }
 
 fn convert_encode_plan(metadata: Option<&VideoMetadata>) -> EncodePlan {
@@ -600,11 +594,26 @@ fn convert_encode_plan(metadata: Option<&VideoMetadata>) -> EncodePlan {
         .map(|metadata| resolution_default_bitrate(metadata.width, metadata.height, 3_050_000))
         .unwrap_or(3_050_000);
     let total_bps = source_bitrate
-        .map(|bitrate| ((bitrate as f64) * 0.72) as u64)
-        .unwrap_or(fallback)
-        .clamp(500_000, 3_400_000);
+        .map(|bitrate| capped_reencode_total(bitrate, 0.72, 500_000, 3_400_000))
+        .unwrap_or(fallback.clamp(500_000, 3_400_000));
 
     encode_plan_from_total(total_bps, 128_000)
+}
+
+fn capped_reencode_total(
+    source_bitrate: u64,
+    source_factor: f64,
+    floor_bps: u64,
+    cap_bps: u64,
+) -> u64 {
+    let target_bps = ((source_bitrate as f64) * source_factor) as u64;
+    let source_cap = source_bitrate.saturating_mul(95) / 100;
+
+    target_bps
+        .min(cap_bps)
+        .max(floor_bps.min(source_cap))
+        .min(source_cap.max(1))
+        .max(48_000.min(source_cap.max(1)))
 }
 
 fn source_bitrate_bps(metadata: Option<&VideoMetadata>) -> Option<u64> {
@@ -631,7 +640,7 @@ fn resolution_default_bitrate(width: Option<u32>, height: Option<u32>, fallback:
 }
 
 fn encode_plan_from_total(total_bps: u64, audio_bps: u64) -> EncodePlan {
-    let total_bps = total_bps.max(96_000);
+    let total_bps = total_bps.max(48_000);
     let minimum_video_bps = 64_000.min(total_bps.saturating_sub(32_000).max(1));
     let maximum_audio_bps = total_bps.saturating_sub(minimum_video_bps).max(32_000);
     let preferred_audio_bps = if total_bps < 500_000 {
@@ -656,6 +665,26 @@ fn encode_plan_from_total(total_bps: u64, audio_bps: u64) -> EncodePlan {
 
 fn bitrate_arg(bits_per_second: u64) -> String {
     format!("{}k", (bits_per_second / 1000).max(1))
+}
+
+fn preview_audio_args(codec: Option<&str>) -> Vec<String> {
+    if codec.is_some_and(is_mp4_copy_safe_audio_codec) {
+        vec!["-c:a".to_string(), "copy".to_string()]
+    } else {
+        vec![
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "128k".to_string(),
+        ]
+    }
+}
+
+fn is_mp4_copy_safe_audio_codec(codec: &str) -> bool {
+    matches!(
+        codec.to_ascii_lowercase().as_str(),
+        "aac" | "mp3" | "alac" | "ac3" | "eac3"
+    )
 }
 
 fn seconds_arg(seconds: f64) -> String {
@@ -798,5 +827,28 @@ mod tests {
         let small = compression_encode_plan(&CompressionPreset::Small, Some(&metadata));
 
         assert!(total_bitrate(small) < total_bitrate(balanced));
+    }
+
+    #[test]
+    fn precise_trim_plan_does_not_inflate_low_bitrate_sources() {
+        let metadata = metadata(120.0, 4 * 1024 * 1024, Some(250_000));
+        let plan = trim_encode_plan(&metadata);
+
+        assert!(total_bitrate(plan) <= 250_000);
+    }
+
+    #[test]
+    fn convert_plan_does_not_inflate_low_bitrate_sources() {
+        let metadata = metadata(120.0, 4 * 1024 * 1024, Some(250_000));
+        let plan = convert_encode_plan(Some(&metadata));
+
+        assert!(total_bitrate(plan) <= 250_000);
+    }
+
+    #[test]
+    fn preview_remux_copies_mp4_safe_audio() {
+        let args = preview_audio_args(Some("aac"));
+
+        assert_eq!(args, vec!["-c:a".to_string(), "copy".to_string()]);
     }
 }

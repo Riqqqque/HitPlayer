@@ -1,5 +1,6 @@
 use crate::models::{JobPhase, JobProgress, JobResult};
 use crate::paths::binary_path;
+use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -164,6 +165,7 @@ pub fn run_ffmpeg_job(
     manager.clear(&job_id);
 
     if was_canceled {
+        remove_incomplete_output(&job.output_path);
         emit_progress(
             &app,
             JobProgress {
@@ -186,7 +188,7 @@ pub fn run_ffmpeg_job(
         });
     }
 
-    if status.success() {
+    if status.success() && output_file_ready(&job.output_path) {
         emit_progress(
             &app,
             JobProgress {
@@ -199,36 +201,37 @@ pub fn run_ffmpeg_job(
                 message: Some("Finished.".to_string()),
             },
         );
-        Ok(JobResult {
+        return Ok(JobResult {
             success: true,
             output_path: job.output_path.to_string_lossy().to_string(),
             duration_seconds: job.total_duration,
             log: log_text,
             canceled: false,
             error: None,
-        })
-    } else {
-        emit_progress(
-            &app,
-            JobProgress {
-                job_id,
-                phase: JobPhase::Failed,
-                percent: 0.0,
-                out_time_seconds: None,
-                speed: None,
-                fps: None,
-                message: Some("Export failed. Open details for FFmpeg log.".to_string()),
-            },
-        );
-        Ok(JobResult {
-            success: false,
-            output_path: job.output_path.to_string_lossy().to_string(),
-            duration_seconds: job.total_duration,
-            log: log_text,
-            canceled: false,
-            error: Some("Export failed. Open details for FFmpeg log.".to_string()),
-        })
+        });
     }
+
+    remove_incomplete_output(&job.output_path);
+    emit_progress(
+        &app,
+        JobProgress {
+            job_id,
+            phase: JobPhase::Failed,
+            percent: 0.0,
+            out_time_seconds: None,
+            speed: None,
+            fps: None,
+            message: Some("Export failed. Open details for FFmpeg log.".to_string()),
+        },
+    );
+    Ok(JobResult {
+        success: false,
+        output_path: job.output_path.to_string_lossy().to_string(),
+        duration_seconds: job.total_duration,
+        log: log_text,
+        canceled: false,
+        error: Some("Export failed. Open details for FFmpeg log.".to_string()),
+    })
 }
 
 fn read_progress<R: std::io::Read>(
@@ -352,6 +355,20 @@ fn command_no_window(program: PathBuf) -> Command {
     command
 }
 
+fn output_file_ready(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .metadata()
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false)
+}
+
+fn remove_incomplete_output(path: &Path) {
+    if path.is_file() {
+        let _ = fs::remove_file(path);
+    }
+}
+
 fn kill_process_tree(pid: u32) -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -378,4 +395,38 @@ fn kill_process_tree(pid: u32) -> Result<(), String> {
 
 pub fn path_arg(path: &Path) -> String {
     path.to_string_lossy().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_file_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "hitplayer-job-test-{}-{name}",
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    #[test]
+    fn output_file_ready_rejects_missing_and_empty_files() {
+        let missing = temp_file_path("missing.mp4");
+        assert!(!output_file_ready(&missing));
+
+        let empty = temp_file_path("empty.mp4");
+        fs::write(&empty, []).unwrap();
+        assert!(!output_file_ready(&empty));
+
+        let _ = fs::remove_file(empty);
+    }
+
+    #[test]
+    fn remove_incomplete_output_deletes_partial_file() {
+        let partial = temp_file_path("partial.mp4");
+        fs::write(&partial, b"partial").unwrap();
+
+        remove_incomplete_output(&partial);
+
+        assert!(!partial.exists());
+    }
 }

@@ -157,7 +157,7 @@ export default function App() {
     getLaunchVideoPath()
       .then((path) => {
         if (path) {
-          void loadVideo(path);
+          loadVideo(path).catch((err) => setError(String(err)));
         }
       })
       .catch(() => {
@@ -232,21 +232,33 @@ export default function App() {
     setResult(null);
     setDetailsLog("");
 
-    const info = await probeVideo(path);
-    if (requestId !== loadRequestId.current) {
-      return;
-    }
+    try {
+      const info = await probeVideo(path);
+      if (requestId !== loadRequestId.current) {
+        return;
+      }
 
-    setMetadata(info);
-    setTrimEnd(info.durationSeconds ?? 0);
+      setMetadata(info);
+      setTrimEnd(info.durationSeconds ?? 0);
 
-    if (canTryPreview(path)) {
-      setPreviewState("native");
-      setPreviewSource("native");
-      setPreviewMessage(null);
-      setPreviewUrl(toAssetUrl(path));
-    } else {
-      await preparePreviewForPath(path, requestId, false);
+      if (canTryPreview(path)) {
+        setPreviewState("native");
+        setPreviewSource("native");
+        setPreviewMessage(null);
+        setPreviewUrl(toAssetUrl(path));
+      } else {
+        await preparePreviewForPath(path, requestId, false);
+      }
+    } catch (err) {
+      if (requestId === loadRequestId.current) {
+        setMetadata(null);
+        setPreviewFailed(true);
+        setPreviewUrl(null);
+        setPreviewState("failed");
+        setPreviewSource(null);
+        setPreviewMessage("Could not read this video. Check that the file or network drive is still available.");
+      }
+      throw err;
     }
   }
 
