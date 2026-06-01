@@ -14,7 +14,7 @@ const PRESETS: Array<{ id: CompressionPreset; label: string; hint: string }> = [
   { id: "balanced", label: "Balanced", hint: "Targets about 45 MB per 2 min" },
   { id: "small", label: "Small File", hint: "Harder squeeze" },
   { id: "high_quality", label: "High Quality", hint: "Cleaner, still capped" },
-  { id: "nvidia_fast", label: "NVIDIA Fast", hint: "Fast size target" },
+  { id: "nvidia_fast", label: "NVIDIA Fast", hint: "Uses NVENC" },
 ];
 
 export function CompressionPanel({
@@ -62,7 +62,8 @@ export function CompressionPanel({
         Compress Video
       </button>
       <p className="mt-3 text-xs leading-5 text-slate-500">
-        Balanced and Small use duration-aware bitrate targets so ordinary clips actually shrink.
+        CPU presets run with extra headroom for games and OBS. NVIDIA Fast uses NVENC, so avoid it while OBS is
+        already using NVENC.
       </p>
     </section>
   );

@@ -64,7 +64,7 @@ pub async fn fast_trim(
             options.output_directory.as_deref(),
             fast_extension,
         )?;
-        let args = vec![
+        let mut args = vec![
             "-y".to_string(),
             "-ss".to_string(),
             seconds_arg(options.start_seconds),
@@ -80,11 +80,9 @@ pub async fn fast_trim(
             "-dn".to_string(),
             "-c".to_string(),
             "copy".to_string(),
-            "-progress".to_string(),
-            "pipe:1".to_string(),
-            "-nostats".to_string(),
-            path_arg(&output_path),
         ];
+        args.extend(progress_args());
+        args.push(path_arg(&output_path));
 
         run_ffmpeg_job(
             app,
@@ -120,7 +118,7 @@ pub async fn precise_trim(
             "mp4",
         )?;
         let plan = trim_encode_plan(&metadata);
-        let args = vec![
+        let mut args = vec![
             "-y".to_string(),
             "-ss".to_string(),
             seconds_arg(options.start_seconds),
@@ -138,6 +136,9 @@ pub async fn precise_trim(
             "libx264".to_string(),
             "-preset".to_string(),
             "veryfast".to_string(),
+        ];
+        args.extend(low_impact_thread_args());
+        args.extend([
             "-b:v".to_string(),
             bitrate_arg(plan.video_bitrate_bps),
             "-maxrate".to_string(),
@@ -152,11 +153,9 @@ pub async fn precise_trim(
             bitrate_arg(plan.audio_bitrate_bps),
             "-movflags".to_string(),
             "+faststart".to_string(),
-            "-progress".to_string(),
-            "pipe:1".to_string(),
-            "-nostats".to_string(),
-            path_arg(&output_path),
-        ];
+        ]);
+        args.extend(progress_args());
+        args.push(path_arg(&output_path));
 
         run_ffmpeg_job(
             app,
@@ -214,14 +213,9 @@ pub async fn compress_video(
         ];
 
         args.extend(compression_args(&options.preset, metadata.as_ref()));
-        args.extend([
-            "-movflags".to_string(),
-            "+faststart".to_string(),
-            "-progress".to_string(),
-            "pipe:1".to_string(),
-            "-nostats".to_string(),
-            path_arg(&output_path),
-        ]);
+        args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+        args.extend(progress_args());
+        args.push(path_arg(&output_path));
 
         run_ffmpeg_job(
             app,
@@ -260,7 +254,7 @@ pub async fn convert_to_mp4(
             "mp4",
         )?;
         let plan = convert_encode_plan(metadata.as_ref());
-        let args = vec![
+        let mut args = vec![
             "-y".to_string(),
             "-i".to_string(),
             path_arg(input),
@@ -274,6 +268,9 @@ pub async fn convert_to_mp4(
             "libx264".to_string(),
             "-preset".to_string(),
             "veryfast".to_string(),
+        ];
+        args.extend(low_impact_thread_args());
+        args.extend([
             "-b:v".to_string(),
             bitrate_arg(plan.video_bitrate_bps),
             "-maxrate".to_string(),
@@ -288,11 +285,9 @@ pub async fn convert_to_mp4(
             bitrate_arg(plan.audio_bitrate_bps),
             "-movflags".to_string(),
             "+faststart".to_string(),
-            "-progress".to_string(),
-            "pipe:1".to_string(),
-            "-nostats".to_string(),
-            path_arg(&output_path),
-        ];
+        ]);
+        args.extend(progress_args());
+        args.push(path_arg(&output_path));
 
         run_ffmpeg_job(
             app,
@@ -400,11 +395,15 @@ fn prepare_preview_internal(
         args.extend(["-c:v".to_string(), "copy".to_string()]);
         args.extend(preview_audio_args(metadata.audio_codec.as_deref()));
     } else {
+        args.extend(preview_scale_args(&metadata));
         args.extend([
             "-c:v".to_string(),
             "libx264".to_string(),
             "-preset".to_string(),
             "veryfast".to_string(),
+        ]);
+        args.extend(low_impact_thread_args());
+        args.extend([
             "-crf".to_string(),
             "23".to_string(),
             "-pix_fmt".to_string(),
@@ -416,14 +415,9 @@ fn prepare_preview_internal(
         ]);
     }
 
-    args.extend([
-        "-movflags".to_string(),
-        "+faststart".to_string(),
-        "-progress".to_string(),
-        "pipe:1".to_string(),
-        "-nostats".to_string(),
-        path_arg(&output_path),
-    ]);
+    args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+    args.extend(progress_args());
+    args.push(path_arg(&output_path));
 
     let result = run_ffmpeg_job(
         app.clone(),
@@ -543,6 +537,10 @@ fn compression_args(preset: &CompressionPreset, metadata: Option<&VideoMetadata>
             "yuv420p".to_string(),
         ],
     };
+
+    if !matches!(preset, CompressionPreset::NvidiaFast) {
+        args.extend(low_impact_thread_args());
+    }
 
     args.extend([
         "-c:a".to_string(),
@@ -665,6 +663,63 @@ fn encode_plan_from_total(total_bps: u64, audio_bps: u64) -> EncodePlan {
 
 fn bitrate_arg(bits_per_second: u64) -> String {
     format!("{}k", (bits_per_second / 1000).max(1))
+}
+
+fn progress_args() -> Vec<String> {
+    vec![
+        "-progress".to_string(),
+        "pipe:1".to_string(),
+        "-stats_period".to_string(),
+        "1".to_string(),
+        "-nostats".to_string(),
+    ]
+}
+
+fn low_impact_thread_args() -> Vec<String> {
+    vec![
+        "-threads".to_string(),
+        low_impact_thread_count().to_string(),
+    ]
+}
+
+fn low_impact_thread_count() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|cores| cores.get())
+        .unwrap_or(4);
+
+    match cores {
+        0..=4 => 1,
+        5..=8 => 2,
+        _ => (cores / 3).clamp(2, 4),
+    }
+}
+
+fn preview_scale_args(metadata: &VideoMetadata) -> Vec<String> {
+    preview_scaled_dimensions(metadata.width, metadata.height)
+        .map(|(width, height)| vec!["-vf".to_string(), format!("scale={width}:{height}")])
+        .unwrap_or_default()
+}
+
+fn preview_scaled_dimensions(width: Option<u32>, height: Option<u32>) -> Option<(u32, u32)> {
+    let width = width?;
+    let height = height?;
+
+    if width == 0 || height == 0 || (width <= 1920 && height <= 1080) {
+        return None;
+    }
+
+    let scale = (1920.0 / f64::from(width)).min(1080.0 / f64::from(height));
+    let mut scaled_width = ((f64::from(width) * scale).round() as u32).max(2);
+    let mut scaled_height = ((f64::from(height) * scale).round() as u32).max(2);
+
+    if !scaled_width.is_multiple_of(2) {
+        scaled_width -= 1;
+    }
+    if !scaled_height.is_multiple_of(2) {
+        scaled_height -= 1;
+    }
+
+    Some((scaled_width.max(2), scaled_height.max(2)))
 }
 
 fn preview_audio_args(codec: Option<&str>) -> Vec<String> {
@@ -850,5 +905,37 @@ mod tests {
         let args = preview_audio_args(Some("aac"));
 
         assert_eq!(args, vec!["-c:a".to_string(), "copy".to_string()]);
+    }
+
+    #[test]
+    fn low_impact_thread_count_keeps_cpu_headroom() {
+        let threads = low_impact_thread_count();
+
+        assert!((1..=4).contains(&threads));
+    }
+
+    #[test]
+    fn progress_args_emit_at_one_second_intervals() {
+        let args = progress_args();
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-progress" && pair[1] == "pipe:1"));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-stats_period" && pair[1] == "1"));
+    }
+
+    #[test]
+    fn preview_transcode_scales_4k_to_1080p() {
+        assert_eq!(
+            preview_scaled_dimensions(Some(3840), Some(2160)),
+            Some((1920, 1080))
+        );
+    }
+
+    #[test]
+    fn preview_transcode_leaves_1080p_alone() {
+        assert_eq!(preview_scaled_dimensions(Some(1920), Some(1080)), None);
     }
 }
