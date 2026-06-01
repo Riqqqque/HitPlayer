@@ -133,7 +133,7 @@ export function VideoPlayer({
             ref={viewportRef}
             className={
               theaterMode
-                ? "absolute inset-x-4 bottom-5 top-4 flex items-center justify-center overflow-hidden"
+                ? "absolute inset-x-4 bottom-10 top-4 flex items-center justify-center overflow-hidden"
                 : "absolute inset-0 flex items-center justify-center overflow-hidden"
             }
           >

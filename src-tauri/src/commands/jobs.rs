@@ -109,7 +109,7 @@ pub fn run_ffmpeg_job(
         },
     );
 
-    let mut command = command_no_window(ffmpeg);
+    let mut command = ffmpeg_command(ffmpeg);
     command
         .args(&job.args)
         .stdout(Stdio::piped())
@@ -345,14 +345,43 @@ fn emit_progress(app: &AppHandle, progress: JobProgress) {
     let _ = app.emit("ffmpeg-progress", progress);
 }
 
+fn ffmpeg_command(program: PathBuf) -> Command {
+    let mut command = Command::new(program);
+    apply_ffmpeg_process_flags(&mut command);
+    command
+}
+
 fn command_no_window(program: PathBuf) -> Command {
     let mut command = Command::new(program);
+    apply_no_window_flag(&mut command);
+    command
+}
+
+fn apply_no_window_flag(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
+        command.creation_flags(CREATE_NO_WINDOW);
     }
-    command
+}
+
+fn apply_ffmpeg_process_flags(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
+    }
+}
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(windows)]
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
+
+#[cfg(test)]
+#[cfg(windows)]
+fn ffmpeg_creation_flags_for_test() -> u32 {
+    CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
 }
 
 fn output_file_ready(path: &Path) -> bool {
@@ -428,5 +457,14 @@ mod tests {
         remove_incomplete_output(&partial);
 
         assert!(!partial.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ffmpeg_runs_below_normal_without_console_window() {
+        assert_eq!(
+            ffmpeg_creation_flags_for_test(),
+            CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        );
     }
 }
