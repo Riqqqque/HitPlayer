@@ -5,6 +5,7 @@ type CompressionPanelProps = {
   selectedPreset: CompressionPreset;
   encoders: EncoderSupport | null;
   hasVideo: boolean;
+  mediaSelected: boolean;
   isBusy: boolean;
   onPresetChange: (preset: CompressionPreset) => void;
   onCompress: () => void;
@@ -21,6 +22,7 @@ export function CompressionPanel({
   selectedPreset,
   encoders,
   hasVideo,
+  mediaSelected,
   isBusy,
   onPresetChange,
   onCompress,
@@ -57,6 +59,9 @@ export function CompressionPanel({
       </div>
 
       {!hasNvenc ? <p className="mt-3 text-xs text-slate-500">NVIDIA NVENC not detected.</p> : null}
+      {mediaSelected && !hasVideo ? (
+        <p className="mt-3 text-xs text-slate-500">Video compression is only available for video files right now.</p>
+      ) : null}
 
       <button type="button" className="primary-button mt-4 w-full" onClick={onCompress} disabled={!canCompress}>
         Compress Video

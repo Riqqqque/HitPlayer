@@ -1,4 +1,4 @@
-import { FileVideo } from "lucide-react";
+import { FileVideo, Music } from "lucide-react";
 import { filenameFromPath, formatBitrate, formatDuration, formatFileSize } from "../lib/format";
 import type { VideoMetadata } from "../lib/types";
 
@@ -16,13 +16,21 @@ function value(text: string | number | null | undefined): string {
 }
 
 export function FileInfoCard({ filePath, metadata }: FileInfoCardProps) {
+  const audioStream = metadata?.streams.find((stream) => stream.codecType === "audio");
+  const audioOnly = !!metadata?.audioCodec && !metadata.videoCodec;
+  const parsedSampleRate = audioStream?.sampleRate ? Number(audioStream.sampleRate) : null;
   const resolution =
-    metadata?.width && metadata?.height ? `${metadata.width} x ${metadata.height}` : "Unknown";
+    metadata?.width && metadata?.height ? `${metadata.width} x ${metadata.height}` : audioOnly ? "Audio only" : "Unknown";
+  const sampleRate = audioStream?.sampleRate
+    ? `${parsedSampleRate != null && Number.isFinite(parsedSampleRate) ? parsedSampleRate.toLocaleString() : audioStream.sampleRate} Hz`
+    : "Unknown";
+  const channels = audioStream?.channels ? `${audioStream.channels} ch` : "Unknown";
+  const Icon = audioOnly ? Music : FileVideo;
 
   return (
     <section className="rounded-lg border border-white/10 bg-ink-850 p-4 shadow-panel">
       <div className="mb-4 flex items-center gap-2">
-        <FileVideo size={18} className="text-hit-300" />
+        <Icon size={18} className="text-hit-300" />
         <h2 className="text-sm font-semibold uppercase text-slate-300">File Info</h2>
       </div>
 
@@ -33,6 +41,8 @@ export function FileInfoCard({ filePath, metadata }: FileInfoCardProps) {
         <InfoRow label="Resolution" value={resolution} />
         <InfoRow label="Video codec" value={value(metadata?.videoCodec)} />
         <InfoRow label="Audio codec" value={value(metadata?.audioCodec)} />
+        {audioStream ? <InfoRow label="Channels" value={channels} /> : null}
+        {audioStream ? <InfoRow label="Sample rate" value={sampleRate} /> : null}
         <InfoRow label="File size" value={formatFileSize(metadata?.fileSizeBytes)} />
         <InfoRow label="Bitrate" value={formatBitrate(metadata?.bitrate)} />
       </dl>

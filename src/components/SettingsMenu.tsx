@@ -98,7 +98,7 @@ export function SettingsMenu({
               <div>
                 <h3 className="text-sm font-semibold text-slate-100">Output folder</h3>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  {outputDirectory ? "Exports use this folder." : "Exports go beside the source video."}
+                  {outputDirectory ? "Exports use this folder." : "Exports go beside the source file."}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -124,7 +124,7 @@ export function SettingsMenu({
             </div>
             <div className="mt-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs text-slate-300">
               <span className="block break-all">
-                {outputDirectory ?? "HitPlayerExports folder next to each source video"}
+                {outputDirectory ?? "HitPlayerExports folder next to each source file"}
               </span>
             </div>
           </div>

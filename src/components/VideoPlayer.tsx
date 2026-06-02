@@ -1,8 +1,9 @@
-import { AlertCircle, Film, LoaderCircle } from "lucide-react";
+import { AlertCircle, Film, LoaderCircle, Music } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { extensionFromPath, filenameFromPath, secondsToTimestamp } from "../lib/format";
 
-const PREVIEW_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
+const VIDEO_PREVIEW_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
+const AUDIO_PREVIEW_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac"]);
 
 type VideoPlayerProps = {
   filePath: string | null;
@@ -12,6 +13,7 @@ type VideoPlayerProps = {
   durationSeconds: number | null;
   previewFailed: boolean;
   theaterMode: boolean;
+  isAudioOnly: boolean;
   width: number | null;
   height: number | null;
   onPreviewFailed: () => void;
@@ -19,7 +21,12 @@ type VideoPlayerProps = {
 };
 
 export function canTryPreview(path: string | null): boolean {
-  return path ? PREVIEW_EXTENSIONS.has(extensionFromPath(path)) : false;
+  if (!path) {
+    return false;
+  }
+
+  const extension = extensionFromPath(path);
+  return VIDEO_PREVIEW_EXTENSIONS.has(extension) || AUDIO_PREVIEW_EXTENSIONS.has(extension);
 }
 
 export function VideoPlayer({
@@ -30,12 +37,13 @@ export function VideoPlayer({
   durationSeconds,
   previewFailed,
   theaterMode,
+  isAudioOnly,
   width,
   height,
   onPreviewFailed,
   onTimeUpdate,
 }: VideoPlayerProps) {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [intrinsicSize, setIntrinsicSize] = useState<{ width: number; height: number } | null>(null);
@@ -75,13 +83,13 @@ export function VideoPlayer({
   }, [aspectRatio, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
-    if (!videoRef.current || !previewUrl) {
+    if (!mediaRef.current || !previewUrl) {
       return;
     }
 
     setIntrinsicSize(null);
-    videoRef.current.load();
-  }, [previewUrl]);
+    mediaRef.current.load();
+  }, [isAudioOnly, previewUrl]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -129,33 +137,63 @@ export function VideoPlayer({
 
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-lg bg-black">
         {canPreview ? (
-          <div
-            ref={viewportRef}
-            className={
-              theaterMode
-                ? "absolute inset-x-4 bottom-10 top-4 flex items-center justify-center overflow-hidden"
-                : "absolute inset-0 flex items-center justify-center overflow-hidden"
-            }
-          >
-            <div className="flex max-h-full max-w-full items-center justify-center" style={fittedFrameStyle}>
-              <video
-                ref={videoRef}
-                className="hit-video-preview block h-full w-full rounded-md bg-black object-contain"
-                controls
-                preload="metadata"
-                onError={onPreviewFailed}
-                onLoadedMetadata={(event) => {
-                  const video = event.currentTarget;
-                  if (video.videoWidth > 0 && video.videoHeight > 0) {
-                    setIntrinsicSize({ width: video.videoWidth, height: video.videoHeight });
-                  }
-                }}
-                onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
-              >
-                <source src={previewUrl ?? undefined} />
-              </video>
+          isAudioOnly ? (
+            <div className="absolute inset-0 grid place-items-center overflow-hidden px-6">
+              <div className="w-full max-w-3xl rounded-lg border border-white/10 bg-ink-900/80 p-6 shadow-panel">
+                <div className="mb-5 flex items-center gap-4">
+                  <div className="grid h-14 w-14 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.06] text-hit-300">
+                    <Music size={28} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-base font-semibold text-white">{filenameFromPath(filePath)}</p>
+                    <p className="mt-1 text-sm text-slate-500">Audio preview</p>
+                  </div>
+                </div>
+                <audio
+                  ref={(node) => {
+                    mediaRef.current = node;
+                  }}
+                  className="hit-audio-preview w-full"
+                  controls
+                  preload="metadata"
+                  onError={onPreviewFailed}
+                  onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+                >
+                  <source src={previewUrl ?? undefined} />
+                </audio>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div
+              ref={viewportRef}
+              className={
+                theaterMode
+                  ? "absolute inset-x-4 bottom-10 top-4 flex items-center justify-center overflow-hidden"
+                  : "absolute inset-0 flex items-center justify-center overflow-hidden"
+              }
+            >
+              <div className="flex max-h-full max-w-full items-center justify-center" style={fittedFrameStyle}>
+                <video
+                  ref={(node) => {
+                    mediaRef.current = node;
+                  }}
+                  className="hit-video-preview block h-full w-full rounded-md bg-black object-contain"
+                  controls
+                  preload="metadata"
+                  onError={onPreviewFailed}
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget;
+                    if (video.videoWidth > 0 && video.videoHeight > 0) {
+                      setIntrinsicSize({ width: video.videoWidth, height: video.videoHeight });
+                    }
+                  }}
+                  onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+                >
+                  <source src={previewUrl ?? undefined} />
+                </video>
+              </div>
+            </div>
+          )
         ) : (
           <div className="absolute inset-0 grid place-items-center">
             <div className="mx-auto max-w-lg px-8 text-center">
@@ -176,8 +214,8 @@ export function VideoPlayer({
               <p className="mt-2 text-sm leading-6 text-slate-400">
                 {filePath
                   ? previewMessage ??
-                    "This file may not preview in HitPlayer yet, but FFmpeg can still process it."
-                  : "Common MP4, MOV, WebM, M4V, and FFmpeg-prepared MKV previews can play here."}
+                    "This file may not preview in HitPlayer yet, but FFmpeg may still process it."
+                  : "Open a video or audio file to preview and trim it here."}
               </p>
             </div>
           </div>

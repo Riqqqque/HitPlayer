@@ -4,6 +4,10 @@ use std::process::{Command, Stdio};
 const VIDEO_EXTENSIONS: &[&str] = &[
     ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".ts", ".m2ts",
 ];
+const AUDIO_EXTENSIONS: &[&str] = &[
+    ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus", ".wma", ".aiff", ".aif",
+    ".mka",
+];
 
 #[tauri::command]
 pub fn register_default_player() -> Result<(), String> {
@@ -94,7 +98,7 @@ fn register_default_player_internal() -> Result<(), String> {
     capabilities
         .set_value(
             "ApplicationDescription",
-            &"HitPlayer media player and video utility",
+            &"HitPlayer media player and audio/video utility",
         )
         .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
     capabilities
@@ -104,35 +108,14 @@ fn register_default_player_internal() -> Result<(), String> {
     let (file_associations, _) = capabilities
         .create_subkey("FileAssociations")
         .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    for extension in VIDEO_EXTENSIONS {
+    for extension in VIDEO_EXTENSIONS.iter().chain(AUDIO_EXTENSIONS.iter()) {
         file_associations
-            .set_value(*extension, &"HitPlayer.Video")
+            .set_value(*extension, &"HitPlayer.Media")
             .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
     }
 
-    let (prog_id, _) = hkcu
-        .create_subkey("Software\\Classes\\HitPlayer.Video")
-        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    prog_id
-        .set_value("", &"HitPlayer Video")
-        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    prog_id
-        .set_value("FriendlyTypeName", &"HitPlayer Video")
-        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-
-    let (default_icon, _) = prog_id
-        .create_subkey("DefaultIcon")
-        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    default_icon
-        .set_value("", &icon)
-        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-
-    let (open_command, _) = prog_id
-        .create_subkey("shell\\open\\command")
-        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    open_command
-        .set_value("", &command)
-        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
+    write_prog_id(&hkcu, "HitPlayer.Media", "HitPlayer Media", &icon, &command)?;
+    write_prog_id(&hkcu, "HitPlayer.Video", "HitPlayer Media", &icon, &command)?;
 
     let application_key = format!("Software\\Classes\\Applications\\{exe_name}");
     let (application, _) = hkcu
@@ -152,11 +135,46 @@ fn register_default_player_internal() -> Result<(), String> {
     let (supported_types, _) = application
         .create_subkey("SupportedTypes")
         .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    for extension in VIDEO_EXTENSIONS {
+    for extension in VIDEO_EXTENSIONS.iter().chain(AUDIO_EXTENSIONS.iter()) {
         supported_types
             .set_value(*extension, &"")
             .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
     }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_prog_id(
+    hkcu: &winreg::RegKey,
+    prog_id_name: &str,
+    friendly_name: &str,
+    icon: &str,
+    command: &str,
+) -> Result<(), String> {
+    let (prog_id, _) = hkcu
+        .create_subkey(format!("Software\\Classes\\{prog_id_name}"))
+        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
+    prog_id
+        .set_value("", &friendly_name)
+        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
+    prog_id
+        .set_value("FriendlyTypeName", &friendly_name)
+        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
+
+    let (default_icon, _) = prog_id
+        .create_subkey("DefaultIcon")
+        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
+    default_icon
+        .set_value("", &icon)
+        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
+
+    let (open_command, _) = prog_id
+        .create_subkey("shell\\open\\command")
+        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
+    open_command
+        .set_value("", &command)
+        .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
 
     Ok(())
 }
