@@ -2,7 +2,7 @@ import { Scissors } from "lucide-react";
 import { formatSelectedDuration, secondsToTimestamp } from "../lib/format";
 
 type TrimPanelProps = {
-  hasVideo: boolean;
+  hasMedia: boolean;
   isBusy: boolean;
   currentTime: number;
   durationSeconds: number | null;
@@ -18,7 +18,7 @@ type TrimPanelProps = {
 };
 
 export function TrimPanel({
-  hasVideo,
+  hasMedia,
   isBusy,
   currentTime,
   durationSeconds,
@@ -32,7 +32,7 @@ export function TrimPanel({
   onFastTrim,
   onPreciseTrim,
 }: TrimPanelProps) {
-  const canExport = hasVideo && !isBusy && !validationMessage;
+  const canExport = hasMedia && !isBusy && !validationMessage;
   const max = durationSeconds ?? undefined;
 
   return (
@@ -46,10 +46,10 @@ export function TrimPanel({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <button type="button" className="secondary-button" onClick={onSetStart} disabled={!hasVideo || isBusy}>
+        <button type="button" className="secondary-button" onClick={onSetStart} disabled={!hasMedia || isBusy}>
           Set Start
         </button>
-        <button type="button" className="secondary-button" onClick={onSetEnd} disabled={!hasVideo || isBusy}>
+        <button type="button" className="secondary-button" onClick={onSetEnd} disabled={!hasMedia || isBusy}>
           Set End
         </button>
       </div>
@@ -65,7 +65,7 @@ export function TrimPanel({
             step={0.001}
             value={Number.isFinite(startSeconds) ? startSeconds : 0}
             onChange={(event) => onStartChange(Number(event.target.value))}
-            disabled={!hasVideo || isBusy}
+            disabled={!hasMedia || isBusy}
           />
           <span className="block text-[11px] text-slate-400">{secondsToTimestamp(startSeconds)}</span>
         </label>
@@ -79,7 +79,7 @@ export function TrimPanel({
             step={0.001}
             value={Number.isFinite(endSeconds) ? endSeconds : 0}
             onChange={(event) => onEndChange(Number(event.target.value))}
-            disabled={!hasVideo || isBusy}
+            disabled={!hasMedia || isBusy}
           />
           <span className="block text-[11px] text-slate-400">{secondsToTimestamp(endSeconds)}</span>
         </label>
@@ -103,8 +103,8 @@ export function TrimPanel({
       </div>
 
       <p className="mt-3 text-xs leading-5 text-slate-500">
-        Fast Trim is instant with no quality loss and keeps the source container. Precise Trim is frame-accurate and
-        uses a source-aware bitrate cap.
+        Fast Trim is instant with no quality loss and keeps the source container. Precise Trim re-encodes for cleaner
+        exact cuts.
       </p>
     </section>
   );

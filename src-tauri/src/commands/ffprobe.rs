@@ -9,16 +9,16 @@ use tauri::AppHandle;
 pub async fn probe_video(app: AppHandle, path: String) -> Result<VideoMetadata, String> {
     tauri::async_runtime::spawn_blocking(move || probe_video_internal(&app, Path::new(&path)))
         .await
-        .map_err(|error| format!("Could not read video metadata: {error}"))?
+        .map_err(|error| format!("Could not read media metadata: {error}"))?
 }
 
 pub fn probe_video_internal(app: &AppHandle, input: &Path) -> Result<VideoMetadata, String> {
     if !input.is_file() {
-        return Err("Could not read video metadata.".to_string());
+        return Err("Could not read media metadata.".to_string());
     }
 
     let file_size_bytes = std::fs::metadata(input)
-        .map_err(|_| "Could not read video metadata.".to_string())?
+        .map_err(|_| "Could not read media metadata.".to_string())?
         .len();
 
     let ffprobe = binary_path(app, "ffprobe")?;
@@ -35,14 +35,14 @@ pub fn probe_video_internal(app: &AppHandle, input: &Path) -> Result<VideoMetada
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|error| format!("Could not read video metadata: {error}"))?;
+        .map_err(|error| format!("Could not read media metadata: {error}"))?;
 
     if !output.status.success() {
-        return Err("Could not read video metadata.".to_string());
+        return Err("Could not read media metadata.".to_string());
     }
 
     let response: FfprobeResponse = serde_json::from_slice(&output.stdout)
-        .map_err(|_| "Could not read video metadata.".to_string())?;
+        .map_err(|_| "Could not read media metadata.".to_string())?;
 
     Ok(metadata_from_response(response, file_size_bytes))
 }
@@ -62,10 +62,9 @@ fn metadata_from_response(response: FfprobeResponse, file_size_bytes: u64) -> Vi
         })
         .collect();
 
-    let video_stream = response
-        .streams
-        .iter()
-        .find(|stream| stream.codec_type.as_deref() == Some("video"));
+    let video_stream = response.streams.iter().find(|stream| {
+        stream.codec_type.as_deref() == Some("video") && !stream.is_attached_picture()
+    });
     let audio_stream = response
         .streams
         .iter()
@@ -75,7 +74,8 @@ fn metadata_from_response(response: FfprobeResponse, file_size_bytes: u64) -> Vi
         .format
         .as_ref()
         .and_then(|format| parse_optional_f64(format.duration.as_deref()))
-        .or_else(|| video_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref())));
+        .or_else(|| video_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref())))
+        .or_else(|| audio_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref())));
 
     let format = response.format.as_ref();
 
@@ -129,6 +129,22 @@ struct FfprobeStream {
     channels: Option<u32>,
     sample_rate: Option<String>,
     duration: Option<String>,
+    disposition: Option<FfprobeDisposition>,
+}
+
+impl FfprobeStream {
+    fn is_attached_picture(&self) -> bool {
+        self.disposition
+            .as_ref()
+            .and_then(|disposition| disposition.attached_pic)
+            .unwrap_or_default()
+            != 0
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct FfprobeDisposition {
+    attached_pic: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,4 +152,75 @@ struct FfprobeFormat {
     format_name: Option<String>,
     duration: Option<String>,
     bit_rate: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn audio_stream(duration: Option<&str>) -> FfprobeStream {
+        FfprobeStream {
+            index: Some(0),
+            codec_type: Some("audio".to_string()),
+            codec_name: Some("mp3".to_string()),
+            width: None,
+            height: None,
+            channels: Some(2),
+            sample_rate: Some("48000".to_string()),
+            duration: duration.map(str::to_string),
+            disposition: None,
+        }
+    }
+
+    fn attached_picture_stream() -> FfprobeStream {
+        FfprobeStream {
+            index: Some(1),
+            codec_type: Some("video".to_string()),
+            codec_name: Some("mjpeg".to_string()),
+            width: Some(800),
+            height: Some(800),
+            channels: None,
+            sample_rate: None,
+            duration: None,
+            disposition: Some(FfprobeDisposition {
+                attached_pic: Some(1),
+            }),
+        }
+    }
+
+    #[test]
+    fn audio_stream_duration_is_used_when_format_duration_is_missing() {
+        let metadata = metadata_from_response(
+            FfprobeResponse {
+                streams: vec![audio_stream(Some("12.5"))],
+                format: Some(FfprobeFormat {
+                    format_name: Some("mp3".to_string()),
+                    duration: None,
+                    bit_rate: Some("128000".to_string()),
+                }),
+            },
+            1000,
+        );
+
+        assert_eq!(metadata.duration_seconds, Some(12.5));
+    }
+
+    #[test]
+    fn attached_album_art_is_not_treated_as_video() {
+        let metadata = metadata_from_response(
+            FfprobeResponse {
+                streams: vec![audio_stream(Some("20")), attached_picture_stream()],
+                format: Some(FfprobeFormat {
+                    format_name: Some("mp3".to_string()),
+                    duration: Some("20".to_string()),
+                    bit_rate: Some("128000".to_string()),
+                }),
+            },
+            1000,
+        );
+
+        assert_eq!(metadata.video_codec, None);
+        assert_eq!(metadata.width, None);
+        assert_eq!(metadata.audio_codec, Some("mp3".to_string()));
+    }
 }

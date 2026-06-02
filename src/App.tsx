@@ -63,13 +63,13 @@ function storedString(key: string): string | null {
 }
 
 function trimValidation(
-  hasVideo: boolean,
+  hasMedia: boolean,
   startSeconds: number,
   endSeconds: number,
   durationSeconds: number | null,
 ): string | null {
-  if (!hasVideo) {
-    return "Select a video first.";
+  if (!hasMedia) {
+    return "Select a media file first.";
   }
   if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds)) {
     return "Invalid trim range.";
@@ -81,7 +81,7 @@ function trimValidation(
     return "End must be greater than start.";
   }
   if (durationSeconds != null && endSeconds > durationSeconds + 0.001) {
-    return "End must be within the video duration.";
+    return "End must be within the media duration.";
   }
   if (endSeconds - startSeconds <= 0.1) {
     return "Selected duration must be greater than 0.1 seconds.";
@@ -121,10 +121,12 @@ export default function App() {
   const loadRequestId = useRef(0);
 
   const durationSeconds = metadata?.durationSeconds ?? null;
-  const hasVideo = !!selectedPath && !!metadata;
+  const hasMedia = !!selectedPath && !!metadata;
+  const hasVideoStream = !!metadata?.videoCodec;
+  const hasAudioOnly = hasMedia && !hasVideoStream && !!metadata?.audioCodec;
   const validationMessage = useMemo(
-    () => trimValidation(hasVideo, trimStart, trimEnd, durationSeconds),
-    [hasVideo, trimStart, trimEnd, durationSeconds],
+    () => trimValidation(hasMedia, trimStart, trimEnd, durationSeconds),
+    [hasMedia, trimStart, trimEnd, durationSeconds],
   );
 
   useEffect(() => {
@@ -192,8 +194,8 @@ export default function App() {
       setPreviewSource(preview.method === "stream_copy" ? "stream_copy" : "transcode");
       setPreviewMessage(
         preview.usedCachedFile
-          ? "Using the cached local preview. Exports still use the original video."
-          : "Preview ready. Exports still use the original video.",
+          ? "Using the cached local preview. Exports still use the original file."
+          : "Preview ready. Exports still use the original file.",
       );
       setDetailsLog(preview.log);
     } catch (err) {
@@ -205,7 +207,7 @@ export default function App() {
       setPreviewUrl(null);
       setPreviewState("failed");
       setPreviewSource(null);
-      setPreviewMessage("This file cannot be previewed yet, but FFmpeg can still process it.");
+      setPreviewMessage("This file cannot be previewed yet, but FFmpeg may still process it.");
       setError(String(err));
     } finally {
       if (requestId === loadRequestId.current) {
@@ -256,7 +258,7 @@ export default function App() {
         setPreviewUrl(null);
         setPreviewState("failed");
         setPreviewSource(null);
-        setPreviewMessage("Could not read this video. Check that the file or network drive is still available.");
+        setPreviewMessage("Could not read this media file. Check that the file or network drive is still available.");
       }
       throw err;
     }
@@ -298,9 +300,9 @@ export default function App() {
     }
   }
 
-  function selectedVideoPath(): string {
+  function selectedMediaPath(): string {
     if (!selectedPath) {
-      throw new Error("Select a video first.");
+      throw new Error("Select a media file first.");
     }
     return selectedPath;
   }
@@ -312,7 +314,7 @@ export default function App() {
   function handleFastTrim() {
     void runJob("Fast Trim", () =>
       fastTrim({
-        inputPath: selectedVideoPath(),
+        inputPath: selectedMediaPath(),
         startSeconds: trimStart,
         endSeconds: trimEnd,
         outputDirectory: selectedOutputDirectory(),
@@ -323,7 +325,7 @@ export default function App() {
   function handlePreciseTrim() {
     void runJob("Precise Trim", () =>
       preciseTrim({
-        inputPath: selectedVideoPath(),
+        inputPath: selectedMediaPath(),
         startSeconds: trimStart,
         endSeconds: trimEnd,
         outputDirectory: selectedOutputDirectory(),
@@ -333,13 +335,13 @@ export default function App() {
 
   function handleCompress() {
     void runJob("Compress Video", () =>
-      compressVideo(selectedVideoPath(), preset, undefined, selectedOutputDirectory()),
+      compressVideo(selectedMediaPath(), preset, undefined, selectedOutputDirectory()),
     );
   }
 
   function handleConvert() {
     void runJob("Convert to Compatible MP4", () =>
-      convertToMp4(selectedVideoPath(), undefined, selectedOutputDirectory()),
+      convertToMp4(selectedMediaPath(), undefined, selectedOutputDirectory()),
     );
   }
 
@@ -366,7 +368,7 @@ export default function App() {
     }
 
     setPreviewState("failed");
-    setPreviewMessage("This file cannot be previewed yet, but FFmpeg can still process it.");
+    setPreviewMessage("This file cannot be previewed yet, but FFmpeg may still process it.");
   }
 
   async function handleSetDefaultPlayer() {
@@ -374,7 +376,7 @@ export default function App() {
       setError(null);
       setDefaultPlayerStatus("Opening Windows Default Apps...");
       await openDefaultPlayerSettings();
-      setDefaultPlayerStatus("Pick HitPlayer for the video extensions Windows shows.");
+      setDefaultPlayerStatus("Pick HitPlayer for the media extensions Windows shows.");
     } catch (err) {
       setDefaultPlayerStatus(null);
       setError(String(err));
@@ -467,6 +469,7 @@ export default function App() {
           durationSeconds={durationSeconds}
           previewFailed={previewFailed}
           theaterMode={theaterMode}
+          isAudioOnly={hasAudioOnly}
           width={metadata?.width ?? null}
           height={metadata?.height ?? null}
           onPreviewFailed={handlePreviewFailed}
@@ -483,7 +486,7 @@ export default function App() {
           <FileInfoCard filePath={selectedPath} metadata={metadata} />
 
           <TrimPanel
-            hasVideo={hasVideo}
+            hasMedia={hasMedia}
             isBusy={isBusy}
             currentTime={currentTime}
             durationSeconds={durationSeconds}
@@ -501,13 +504,14 @@ export default function App() {
           <CompressionPanel
             selectedPreset={preset}
             encoders={encoders}
-            hasVideo={hasVideo}
+            hasVideo={hasVideoStream}
+            mediaSelected={hasMedia}
             isBusy={isBusy}
             onPresetChange={handlePresetChange}
             onCompress={handleCompress}
           />
 
-          <ConvertPanel hasVideo={hasVideo} isBusy={isBusy} onConvert={handleConvert} />
+          <ConvertPanel hasVideo={hasVideoStream} mediaSelected={hasMedia} isBusy={isBusy} onConvert={handleConvert} />
         </aside>
       </main>
 

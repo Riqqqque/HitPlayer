@@ -17,13 +17,16 @@ The installer is current-user only, does not need admin rights, bundles FFmpeg/F
 ## What HitPlayer Does
 
 - Opens common video files: MP4, MKV, MOV, AVI, WebM, M4V, FLV, WMV, TS, and M2TS.
+- Opens common audio files: MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, WMA, AIFF, and MKA.
 - Previews MP4, MOV, WebM, and M4V through the built-in Windows WebView video engine.
 - Prepares a local MP4 preview for MKV and other files WebView cannot play directly, including files opened from mapped or UNC network drives.
+- Prepares a local M4A preview for audio formats the built-in player cannot open directly.
 - Still processes the original file with FFmpeg even when a local preview copy is needed.
 - Shows real metadata from FFprobe: duration, resolution, codecs, container, bitrate, and file size.
 - Sets start/end trim points from playback or manual timestamps.
 - Fast trims with stream copy, keeping quality and avoiding re-encoding.
 - Precise trims with H.264/AAC when frame-accurate cuts matter.
+- Fast trims audio with stream copy and precise trims audio to compatible M4A/AAC.
 - Compresses with simple presets that target practical file sizes instead of bloating exports.
 - Converts odd files into compatible MP4 for easier sharing and playback.
 - Lets you choose a custom output folder from Settings.
@@ -71,7 +74,7 @@ npm run tauri:build
 The installer is written to:
 
 ```text
-src-tauri\target\release\bundle\nsis\HitPlayer_0.1.11_x64-setup.exe
+src-tauri\target\release\bundle\nsis\HitPlayer_0.1.12_x64-setup.exe
 ```
 
 GitHub keeps normal push checks quick. The main build workflow runs the frontend build and Rust tests only. Full Windows installer builds run from the separate **Installer** workflow when started manually or when a `v*` release tag is pushed.
@@ -107,7 +110,7 @@ FFprobe was not found. Place ffprobe.exe in the required app binary folder.
 
 ## Output Files
 
-By default, HitPlayer creates a `HitPlayerExports` folder beside the source video.
+By default, HitPlayer creates a `HitPlayerExports` folder beside the source file.
 
 Example:
 
@@ -125,6 +128,8 @@ C:\Videos\HitPlayerExports\clip_converted.mp4
 Existing outputs are never overwritten. HitPlayer adds `_001`, `_002`, and so on.
 
 Fast Trim keeps the source container when that is safer. For example, fast trimming `clip.mkv` writes `clip_trim_fast.mkv`. Re-encoded outputs use MP4.
+
+For audio-only files, Fast Trim keeps the source audio extension when possible. Precise Trim writes a compatible M4A file, for example `song_trim_precise.m4a`.
 
 You can also set a custom output folder in **Settings > Output folder**. When that is set, every trim, compression, and conversion export uses that folder while keeping the same clear filenames.
 
@@ -157,7 +162,7 @@ NVIDIA Fast uses NVENC. It is quick, but it can still compete with OBS if OBS is
 
 The installer registers HitPlayer as a video file handler. Windows still requires the user to confirm default apps.
 
-Inside HitPlayer, open **Settings > Windows defaults > Open Default Apps**. It registers HitPlayer for the current Windows user and opens Windows Default Apps so you can choose it for the video extensions you want.
+Inside HitPlayer, open **Settings > Windows defaults > Open Default Apps**. It registers HitPlayer for the current Windows user and opens Windows Default Apps so you can choose it for the media extensions you want.
 
 ## Updating
 
@@ -187,10 +192,12 @@ For GitHub release builds, run the **Installer** workflow or push a version tag.
 ## Known Limitations
 
 - V1 preview uses the Windows WebView/browser video engine first, so some containers need a local MP4 preview cache before they play.
+- Audio preview uses the same built-in browser media engine first, then falls back to a local M4A preview for formats it cannot open directly.
 - FFmpeg processing supports many more formats than direct browser preview.
 - Fast Trim is not always frame-perfect because it stream-copies.
 - Fast Trim only shrinks by cutting duration because it does not re-encode.
 - Precise Trim is slower because it re-encodes.
+- Compression and compatible MP4 conversion are video-only in this version.
 - NVIDIA Fast only works when NVENC is available.
 - libmpv or libVLC playback is planned later for near-VLC-level compatibility.
 

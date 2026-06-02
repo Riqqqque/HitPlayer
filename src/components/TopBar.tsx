@@ -51,7 +51,7 @@ export function TopBar({
           className="inline-flex items-center gap-2 rounded-lg bg-hit-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-sky-950/40 transition hover:bg-hit-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <FolderOpen size={18} />
-          Open Video
+          Open Media
         </button>
       </div>
     </header>

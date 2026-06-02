@@ -51,12 +51,15 @@ pub async fn fast_trim(
     let manager = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let input = Path::new(&options.input_path);
-        let duration = validate_trim(&app, input, options.start_seconds, options.end_seconds)?;
-        let fast_extension = input
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .filter(|extension| !extension.trim().is_empty())
-            .unwrap_or("mp4");
+        let validation = validate_trim(&app, input, options.start_seconds, options.end_seconds)?;
+        let fast_extension = source_extension(
+            input,
+            if has_video_stream(&validation.metadata) {
+                "mp4"
+            } else {
+                "m4a"
+            },
+        );
         let output_path = default_output_path(
             input,
             "trim_fast",
@@ -72,15 +75,30 @@ pub async fn fast_trim(
             seconds_arg(options.end_seconds),
             "-i".to_string(),
             path_arg(input),
-            "-map".to_string(),
-            "0:v:0".to_string(),
-            "-map".to_string(),
-            "0:a?".to_string(),
-            "-sn".to_string(),
-            "-dn".to_string(),
-            "-c".to_string(),
-            "copy".to_string(),
         ];
+
+        if has_video_stream(&validation.metadata) {
+            args.extend([
+                "-map".to_string(),
+                "0:v:0".to_string(),
+                "-map".to_string(),
+                "0:a?".to_string(),
+                "-sn".to_string(),
+                "-dn".to_string(),
+                "-c".to_string(),
+                "copy".to_string(),
+            ]);
+        } else {
+            args.extend([
+                "-map".to_string(),
+                "0:a:0".to_string(),
+                "-vn".to_string(),
+                "-sn".to_string(),
+                "-dn".to_string(),
+                "-c:a".to_string(),
+                "copy".to_string(),
+            ]);
+        }
         args.extend(progress_args());
         args.push(path_arg(&output_path));
 
@@ -91,7 +109,7 @@ pub async fn fast_trim(
                 name: "Fast Trim".to_string(),
                 args,
                 output_path,
-                total_duration: Some(duration),
+                total_duration: Some(validation.selected_duration),
             },
         )
     })
@@ -108,16 +126,20 @@ pub async fn precise_trim(
     let manager = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let input = Path::new(&options.input_path);
-        let duration = validate_trim(&app, input, options.start_seconds, options.end_seconds)?;
-        let metadata = probe_video_internal(&app, input)?;
+        let validation = validate_trim(&app, input, options.start_seconds, options.end_seconds)?;
+        let metadata = validation.metadata;
+        let output_extension = if has_video_stream(&metadata) {
+            "mp4"
+        } else {
+            "m4a"
+        };
         let output_path = default_output_path(
             input,
             "trim_precise",
             options.output_path.as_deref(),
             options.output_directory.as_deref(),
-            "mp4",
+            output_extension,
         )?;
-        let plan = trim_encode_plan(&metadata);
         let mut args = vec![
             "-y".to_string(),
             "-ss".to_string(),
@@ -126,34 +148,54 @@ pub async fn precise_trim(
             seconds_arg(options.end_seconds),
             "-i".to_string(),
             path_arg(input),
-            "-map".to_string(),
-            "0:v:0".to_string(),
-            "-map".to_string(),
-            "0:a?".to_string(),
-            "-sn".to_string(),
-            "-dn".to_string(),
-            "-c:v".to_string(),
-            "libx264".to_string(),
-            "-preset".to_string(),
-            "veryfast".to_string(),
         ];
-        args.extend(low_impact_thread_args());
-        args.extend([
-            "-b:v".to_string(),
-            bitrate_arg(plan.video_bitrate_bps),
-            "-maxrate".to_string(),
-            bitrate_arg(plan.maxrate_bps),
-            "-bufsize".to_string(),
-            bitrate_arg(plan.bufsize_bps),
-            "-pix_fmt".to_string(),
-            "yuv420p".to_string(),
-            "-c:a".to_string(),
-            "aac".to_string(),
-            "-b:a".to_string(),
-            bitrate_arg(plan.audio_bitrate_bps),
-            "-movflags".to_string(),
-            "+faststart".to_string(),
-        ]);
+
+        if has_video_stream(&metadata) {
+            let plan = trim_encode_plan(&metadata);
+            args.extend([
+                "-map".to_string(),
+                "0:v:0".to_string(),
+                "-map".to_string(),
+                "0:a?".to_string(),
+                "-sn".to_string(),
+                "-dn".to_string(),
+                "-c:v".to_string(),
+                "libx264".to_string(),
+                "-preset".to_string(),
+                "veryfast".to_string(),
+            ]);
+            args.extend(low_impact_thread_args());
+            args.extend([
+                "-b:v".to_string(),
+                bitrate_arg(plan.video_bitrate_bps),
+                "-maxrate".to_string(),
+                bitrate_arg(plan.maxrate_bps),
+                "-bufsize".to_string(),
+                bitrate_arg(plan.bufsize_bps),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                bitrate_arg(plan.audio_bitrate_bps),
+                "-movflags".to_string(),
+                "+faststart".to_string(),
+            ]);
+        } else {
+            args.extend([
+                "-map".to_string(),
+                "0:a:0".to_string(),
+                "-vn".to_string(),
+                "-sn".to_string(),
+                "-dn".to_string(),
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                "192k".to_string(),
+                "-movflags".to_string(),
+                "+faststart".to_string(),
+            ]);
+        }
         args.extend(progress_args());
         args.push(path_arg(&output_path));
 
@@ -164,7 +206,7 @@ pub async fn precise_trim(
                 name: "Precise Trim".to_string(),
                 args,
                 output_path,
-                total_duration: Some(duration),
+                total_duration: Some(validation.selected_duration),
             },
         )
     })
@@ -192,7 +234,12 @@ pub async fn compress_video(
             }
         }
 
-        let metadata = probe_video_internal(&app, input).ok();
+        let metadata = probe_video_internal(&app, input)?;
+        if !has_video_stream(&metadata) {
+            return Err(
+                "Video compression is only available for video files right now.".to_string(),
+            );
+        }
         let output_path = default_output_path(
             input,
             options.preset.suffix(),
@@ -212,7 +259,7 @@ pub async fn compress_video(
             "-dn".to_string(),
         ];
 
-        args.extend(compression_args(&options.preset, metadata.as_ref()));
+        args.extend(compression_args(&options.preset, Some(&metadata)));
         args.extend(["-movflags".to_string(), "+faststart".to_string()]);
         args.extend(progress_args());
         args.push(path_arg(&output_path));
@@ -224,7 +271,7 @@ pub async fn compress_video(
                 name: "Compress Video".to_string(),
                 args,
                 output_path,
-                total_duration: metadata.and_then(|metadata| metadata.duration_seconds),
+                total_duration: metadata.duration_seconds,
             },
         )
     })
@@ -245,7 +292,10 @@ pub async fn convert_to_mp4(
             return Err("Select a video first.".to_string());
         }
 
-        let metadata = probe_video_internal(&app, input).ok();
+        let metadata = probe_video_internal(&app, input)?;
+        if !has_video_stream(&metadata) {
+            return Err("MP4 conversion is only available for video files right now.".to_string());
+        }
         let output_path = default_output_path(
             input,
             "converted",
@@ -253,7 +303,7 @@ pub async fn convert_to_mp4(
             options.output_directory.as_deref(),
             "mp4",
         )?;
-        let plan = convert_encode_plan(metadata.as_ref());
+        let plan = convert_encode_plan(Some(&metadata));
         let mut args = vec![
             "-y".to_string(),
             "-i".to_string(),
@@ -296,7 +346,7 @@ pub async fn convert_to_mp4(
                 name: "Convert to Compatible MP4".to_string(),
                 args,
                 output_path,
-                total_duration: metadata.and_then(|metadata| metadata.duration_seconds),
+                total_duration: metadata.duration_seconds,
             },
         )
     })
@@ -339,23 +389,32 @@ fn prepare_preview_internal(
 ) -> Result<PreviewResult, String> {
     if !input.is_file() {
         return Err(
-            "Could not open this video. Check that the network drive is connected and the file is still available."
+            "Could not open this media file. Check that the network drive is connected and the file is still available."
                 .to_string(),
         );
     }
 
     let metadata = probe_video_internal(app, input)?;
-    let can_copy_video = !force_transcode
+    if !has_video_stream(&metadata) && !has_audio_stream(&metadata) {
+        return Err("This file does not contain a supported audio or video stream.".to_string());
+    }
+
+    let audio_only = is_audio_only(&metadata);
+    let can_copy_video = !audio_only
+        && !force_transcode
         && metadata
             .video_codec
             .as_deref()
             .is_some_and(|codec| codec.eq_ignore_ascii_case("h264"));
-    let method = if can_copy_video {
+    let method = if audio_only {
+        "audio_preview"
+    } else if can_copy_video {
         "stream_copy"
     } else {
         "transcode"
     };
-    let output_path = preview_cache_path(input, method)?;
+    let preview_extension = if audio_only { "m4a" } else { "mp4" };
+    let output_path = preview_cache_path(input, method, preview_extension)?;
 
     cleanup_preview_cache(output_path.parent().unwrap_or_else(|| Path::new("")));
 
@@ -379,22 +438,41 @@ fn prepare_preview_internal(
             .map_err(|error| format!("Could not create preview cache: {error}"))?;
     }
 
-    let mut args = vec![
-        "-y".to_string(),
-        "-i".to_string(),
-        path_arg(input),
-        "-map".to_string(),
-        "0:v:0".to_string(),
-        "-map".to_string(),
-        "0:a?".to_string(),
-        "-sn".to_string(),
-        "-dn".to_string(),
-    ];
+    let mut args = vec!["-y".to_string(), "-i".to_string(), path_arg(input)];
 
-    if can_copy_video {
-        args.extend(["-c:v".to_string(), "copy".to_string()]);
+    if audio_only {
+        args.extend([
+            "-map".to_string(),
+            "0:a:0".to_string(),
+            "-vn".to_string(),
+            "-sn".to_string(),
+            "-dn".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "128k".to_string(),
+        ]);
+    } else if can_copy_video {
+        args.extend([
+            "-map".to_string(),
+            "0:v:0".to_string(),
+            "-map".to_string(),
+            "0:a?".to_string(),
+            "-sn".to_string(),
+            "-dn".to_string(),
+            "-c:v".to_string(),
+            "copy".to_string(),
+        ]);
         args.extend(preview_audio_args(metadata.audio_codec.as_deref()));
     } else {
+        args.extend([
+            "-map".to_string(),
+            "0:v:0".to_string(),
+            "-map".to_string(),
+            "0:a?".to_string(),
+            "-sn".to_string(),
+            "-dn".to_string(),
+        ]);
         args.extend(preview_scale_args(&metadata));
         args.extend([
             "-c:v".to_string(),
@@ -437,7 +515,7 @@ fn prepare_preview_internal(
     if !result.success {
         let _ = fs::remove_file(&output_path);
         return Err(
-            "This file cannot be previewed yet, but FFmpeg can still process it.".to_string(),
+            "This file cannot be previewed yet, but FFmpeg may still process it.".to_string(),
         );
     }
 
@@ -449,14 +527,19 @@ fn prepare_preview_internal(
     })
 }
 
+struct ValidatedTrim {
+    selected_duration: f64,
+    metadata: VideoMetadata,
+}
+
 fn validate_trim(
     app: &AppHandle,
     input: &Path,
     start_seconds: f64,
     end_seconds: f64,
-) -> Result<f64, String> {
+) -> Result<ValidatedTrim, String> {
     if !input.is_file() {
-        return Err("Select a video first.".to_string());
+        return Err("Select a media file first.".to_string());
     }
     if !start_seconds.is_finite() || !end_seconds.is_finite() {
         return Err("Invalid trim range.".to_string());
@@ -474,13 +557,20 @@ fn validate_trim(
     }
 
     let metadata = probe_video_internal(app, input)?;
+    if !has_video_stream(&metadata) && !has_audio_stream(&metadata) {
+        return Err("This file does not contain a supported audio or video stream.".to_string());
+    }
+
     if let Some(duration) = metadata.duration_seconds {
         if end_seconds > duration + 0.001 {
-            return Err("End must be within the video duration.".to_string());
+            return Err("End must be within the media duration.".to_string());
         }
     }
 
-    Ok(selected_duration)
+    Ok(ValidatedTrim {
+        selected_duration,
+        metadata,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -665,6 +755,27 @@ fn bitrate_arg(bits_per_second: u64) -> String {
     format!("{}k", (bits_per_second / 1000).max(1))
 }
 
+fn has_video_stream(metadata: &VideoMetadata) -> bool {
+    metadata.video_codec.is_some()
+}
+
+fn has_audio_stream(metadata: &VideoMetadata) -> bool {
+    metadata.audio_codec.is_some()
+}
+
+fn is_audio_only(metadata: &VideoMetadata) -> bool {
+    !has_video_stream(metadata) && has_audio_stream(metadata)
+}
+
+fn source_extension<'a>(input: &'a Path, fallback: &'a str) -> &'a str {
+    input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::trim)
+        .filter(|extension| !extension.is_empty())
+        .unwrap_or(fallback)
+}
+
 fn progress_args() -> Vec<String> {
     vec![
         "-progress".to_string(),
@@ -757,7 +868,11 @@ fn command_no_window(program: std::path::PathBuf) -> Command {
     command
 }
 
-fn preview_cache_path(input: &Path, method: &str) -> Result<std::path::PathBuf, String> {
+fn preview_cache_path(
+    input: &Path,
+    method: &str,
+    extension: &str,
+) -> Result<std::path::PathBuf, String> {
     let key = preview_cache_key(input);
     let stem = input
         .file_stem()
@@ -771,7 +886,7 @@ fn preview_cache_path(input: &Path, method: &str) -> Result<std::path::PathBuf, 
         return Err("Could not create preview cache.".to_string());
     }
 
-    Ok(cache_dir.join(format!("{stem}_{method}_{key}.mp4")))
+    Ok(cache_dir.join(format!("{stem}_{method}_{key}.{extension}")))
 }
 
 fn preview_cache_key(input: &Path) -> String {
@@ -815,7 +930,9 @@ fn cleanup_preview_cache(cache_dir: &Path) {
         let is_preview = path
             .extension()
             .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("mp4"));
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("mp4") || extension.eq_ignore_ascii_case("m4a")
+            });
         if !is_preview {
             continue;
         }

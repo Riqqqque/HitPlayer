@@ -1,12 +1,26 @@
-const SUPPORTED_EXTENSIONS: &[&str] = &[
+const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mkv", "mov", "avi", "webm", "m4v", "flv", "wmv", "ts", "m2ts",
 ];
 
+const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "opus", "wma", "aiff", "aif", "mka",
+];
+
+fn is_supported_extension(extension: &str) -> bool {
+    VIDEO_EXTENSIONS
+        .iter()
+        .chain(AUDIO_EXTENSIONS.iter())
+        .any(|supported| supported.eq_ignore_ascii_case(extension))
+}
+
 #[tauri::command]
 pub fn open_video_dialog() -> Result<Option<String>, String> {
+    let supported_extensions = [VIDEO_EXTENSIONS, AUDIO_EXTENSIONS].concat();
     let picked = rfd::FileDialog::new()
-        .set_title("Open Video")
-        .add_filter("Supported video files", SUPPORTED_EXTENSIONS)
+        .set_title("Open Media")
+        .add_filter("Supported media files", &supported_extensions)
+        .add_filter("Video files", VIDEO_EXTENSIONS)
+        .add_filter("Audio files", AUDIO_EXTENSIONS)
         .pick_file();
 
     Ok(picked.map(|path| path.to_string_lossy().to_string()))
@@ -41,11 +55,7 @@ pub fn get_launch_video_path() -> Result<Option<String>, String> {
                 && path
                     .extension()
                     .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| {
-                        SUPPORTED_EXTENSIONS
-                            .iter()
-                            .any(|supported| supported.eq_ignore_ascii_case(extension))
-                    })
+                    .is_some_and(is_supported_extension)
         });
 
     Ok(picked.map(|path| path.to_string_lossy().to_string()))
