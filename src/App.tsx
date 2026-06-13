@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CompressionPanel } from "./components/CompressionPanel";
 import { ConvertPanel } from "./components/ConvertPanel";
 import { FileInfoCard } from "./components/FileInfoCard";
+import { PhotoCompressionPanel } from "./components/PhotoCompressionPanel";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { TopBar } from "./components/TopBar";
@@ -10,6 +11,7 @@ import { TrimPanel } from "./components/TrimPanel";
 import { canTryPreview, VideoPlayer } from "./components/VideoPlayer";
 import {
   cancelJob,
+  compressPhoto,
   compressVideo,
   convertToMp4,
   detectEncoders,
@@ -23,15 +25,27 @@ import {
   probeVideo,
   toAssetUrl,
 } from "./lib/api";
-import type { CompressionPreset, EncoderSupport, JobProgress, JobResult, VideoMetadata } from "./lib/types";
+import type {
+  CompressionPreset,
+  EncoderSupport,
+  JobProgress,
+  JobResult,
+  PhotoCompressionFormat,
+  PhotoCompressionPreset,
+  VideoMetadata,
+} from "./lib/types";
 
 const SETTINGS_KEYS = {
   startInTheaterMode: "hitplayer.startInTheaterMode",
   defaultCompressionPreset: "hitplayer.defaultCompressionPreset",
+  defaultPhotoCompressionFormat: "hitplayer.defaultPhotoCompressionFormat",
+  defaultPhotoCompressionPreset: "hitplayer.defaultPhotoCompressionPreset",
   outputDirectory: "hitplayer.outputDirectory",
 };
 
 const COMPRESSION_PRESETS: CompressionPreset[] = ["balanced", "small", "high_quality", "nvidia_fast"];
+const PHOTO_COMPRESSION_PRESETS: PhotoCompressionPreset[] = ["balanced", "small", "high_quality"];
+const PHOTO_COMPRESSION_FORMATS: PhotoCompressionFormat[] = ["jpeg", "webp"];
 type PreviewState = "idle" | "native" | "preparing" | "ready" | "failed";
 type PreviewSource = "native" | "stream_copy" | "transcode" | null;
 
@@ -50,6 +64,28 @@ function storedPreset(): CompressionPreset {
     return COMPRESSION_PRESETS.includes(preset as CompressionPreset) ? (preset as CompressionPreset) : "balanced";
   } catch {
     return "balanced";
+  }
+}
+
+function storedPhotoPreset(): PhotoCompressionPreset {
+  try {
+    const preset = window.localStorage.getItem(SETTINGS_KEYS.defaultPhotoCompressionPreset);
+    return PHOTO_COMPRESSION_PRESETS.includes(preset as PhotoCompressionPreset)
+      ? (preset as PhotoCompressionPreset)
+      : "balanced";
+  } catch {
+    return "balanced";
+  }
+}
+
+function storedPhotoFormat(): PhotoCompressionFormat {
+  try {
+    const format = window.localStorage.getItem(SETTINGS_KEYS.defaultPhotoCompressionFormat);
+    return PHOTO_COMPRESSION_FORMATS.includes(format as PhotoCompressionFormat)
+      ? (format as PhotoCompressionFormat)
+      : "jpeg";
+  } catch {
+    return "jpeg";
   }
 }
 
@@ -102,6 +138,8 @@ export default function App() {
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [preset, setPreset] = useState<CompressionPreset>(() => storedPreset());
+  const [photoPreset, setPhotoPreset] = useState<PhotoCompressionPreset>(() => storedPhotoPreset());
+  const [photoFormat, setPhotoFormat] = useState<PhotoCompressionFormat>(() => storedPhotoFormat());
   const [jobName, setJobName] = useState("");
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const [result, setResult] = useState<JobResult | null>(null);
@@ -122,11 +160,13 @@ export default function App() {
 
   const durationSeconds = metadata?.durationSeconds ?? null;
   const hasMedia = !!selectedPath && !!metadata;
-  const hasVideoStream = !!metadata?.videoCodec;
-  const hasAudioOnly = hasMedia && !hasVideoStream && !!metadata?.audioCodec;
+  const hasImage = hasMedia && metadata?.mediaKind === "image";
+  const hasVideoStream = hasMedia && metadata?.mediaKind === "video" && !!metadata.videoCodec;
+  const hasAudioOnly = hasMedia && metadata?.mediaKind === "audio" && !!metadata.audioCodec;
+  const canTrimMedia = hasVideoStream || hasAudioOnly;
   const validationMessage = useMemo(
-    () => trimValidation(hasMedia, trimStart, trimEnd, durationSeconds),
-    [hasMedia, trimStart, trimEnd, durationSeconds],
+    () => trimValidation(canTrimMedia, trimStart, trimEnd, durationSeconds),
+    [canTrimMedia, trimStart, trimEnd, durationSeconds],
   );
 
   useEffect(() => {
@@ -243,7 +283,12 @@ export default function App() {
       setMetadata(info);
       setTrimEnd(info.durationSeconds ?? 0);
 
-      if (canTryPreview(path)) {
+      if (info.mediaKind === "image") {
+        setPreviewState("native");
+        setPreviewSource("native");
+        setPreviewMessage(null);
+        setPreviewUrl(toAssetUrl(path));
+      } else if (canTryPreview(path)) {
         setPreviewState("native");
         setPreviewSource("native");
         setPreviewMessage(null);
@@ -339,6 +384,17 @@ export default function App() {
     );
   }
 
+  function handleCompressPhoto() {
+    void runJob("Compress Photo", () =>
+      compressPhoto({
+        inputPath: selectedMediaPath(),
+        preset: photoPreset,
+        format: photoFormat,
+        outputDirectory: selectedOutputDirectory(),
+      }),
+    );
+  }
+
   function handleConvert() {
     void runJob("Convert to Compatible MP4", () =>
       convertToMp4(selectedMediaPath(), undefined, selectedOutputDirectory()),
@@ -361,6 +417,12 @@ export default function App() {
 
   function handlePreviewFailed() {
     setPreviewFailed(true);
+
+    if (hasImage) {
+      setPreviewState("failed");
+      setPreviewMessage("This image cannot be previewed here, but FFmpeg may still compress it.");
+      return;
+    }
 
     if (selectedPath && previewSource !== "transcode") {
       void preparePreviewForPath(selectedPath, loadRequestId.current, true);
@@ -387,6 +449,24 @@ export default function App() {
     setPreset(nextPreset);
     try {
       window.localStorage.setItem(SETTINGS_KEYS.defaultCompressionPreset, nextPreset);
+    } catch {
+      // Ignore storage failures. The visible setting still works for this session.
+    }
+  }
+
+  function handlePhotoPresetChange(nextPreset: PhotoCompressionPreset) {
+    setPhotoPreset(nextPreset);
+    try {
+      window.localStorage.setItem(SETTINGS_KEYS.defaultPhotoCompressionPreset, nextPreset);
+    } catch {
+      // Ignore storage failures. The visible setting still works for this session.
+    }
+  }
+
+  function handlePhotoFormatChange(nextFormat: PhotoCompressionFormat) {
+    setPhotoFormat(nextFormat);
+    try {
+      window.localStorage.setItem(SETTINGS_KEYS.defaultPhotoCompressionFormat, nextFormat);
     } catch {
       // Ignore storage failures. The visible setting still works for this session.
     }
@@ -434,12 +514,16 @@ export default function App() {
 
   function handleResetSettings() {
     handlePresetChange("balanced");
+    handlePhotoPresetChange("balanced");
+    handlePhotoFormatChange("jpeg");
     setStartInTheaterMode(false);
     setTheaterMode(false);
     setOutputDirectory(null);
     try {
       window.localStorage.removeItem(SETTINGS_KEYS.startInTheaterMode);
       window.localStorage.removeItem(SETTINGS_KEYS.defaultCompressionPreset);
+      window.localStorage.removeItem(SETTINGS_KEYS.defaultPhotoCompressionPreset);
+      window.localStorage.removeItem(SETTINGS_KEYS.defaultPhotoCompressionFormat);
       window.localStorage.removeItem(SETTINGS_KEYS.outputDirectory);
     } catch {
       // Ignore storage failures.
@@ -470,6 +554,7 @@ export default function App() {
           previewFailed={previewFailed}
           theaterMode={theaterMode}
           isAudioOnly={hasAudioOnly}
+          isImage={hasImage}
           width={metadata?.width ?? null}
           height={metadata?.height ?? null}
           onPreviewFailed={handlePreviewFailed}
@@ -485,33 +570,54 @@ export default function App() {
 
           <FileInfoCard filePath={selectedPath} metadata={metadata} />
 
-          <TrimPanel
-            hasMedia={hasMedia}
-            isBusy={isBusy}
-            currentTime={currentTime}
-            durationSeconds={durationSeconds}
-            startSeconds={trimStart}
-            endSeconds={trimEnd}
-            validationMessage={validationMessage}
-            onSetStart={() => setTrimStart(Math.max(0, currentTime))}
-            onSetEnd={() => setTrimEnd(Math.max(0, currentTime))}
-            onStartChange={setTrimStart}
-            onEndChange={setTrimEnd}
-            onFastTrim={handleFastTrim}
-            onPreciseTrim={handlePreciseTrim}
-          />
+          {hasImage ? (
+            <PhotoCompressionPanel
+              selectedPreset={photoPreset}
+              selectedFormat={photoFormat}
+              hasImage={hasImage}
+              mediaSelected={hasMedia}
+              isBusy={isBusy}
+              hasWebp={!!encoders?.hasLibwebp}
+              onPresetChange={handlePhotoPresetChange}
+              onFormatChange={handlePhotoFormatChange}
+              onCompress={handleCompressPhoto}
+            />
+          ) : (
+            <>
+              <TrimPanel
+                hasMedia={canTrimMedia}
+                isBusy={isBusy}
+                currentTime={currentTime}
+                durationSeconds={durationSeconds}
+                startSeconds={trimStart}
+                endSeconds={trimEnd}
+                validationMessage={validationMessage}
+                onSetStart={() => setTrimStart(Math.max(0, currentTime))}
+                onSetEnd={() => setTrimEnd(Math.max(0, currentTime))}
+                onStartChange={setTrimStart}
+                onEndChange={setTrimEnd}
+                onFastTrim={handleFastTrim}
+                onPreciseTrim={handlePreciseTrim}
+              />
 
-          <CompressionPanel
-            selectedPreset={preset}
-            encoders={encoders}
-            hasVideo={hasVideoStream}
-            mediaSelected={hasMedia}
-            isBusy={isBusy}
-            onPresetChange={handlePresetChange}
-            onCompress={handleCompress}
-          />
+              <CompressionPanel
+                selectedPreset={preset}
+                encoders={encoders}
+                hasVideo={hasVideoStream}
+                mediaSelected={hasMedia}
+                isBusy={isBusy}
+                onPresetChange={handlePresetChange}
+                onCompress={handleCompress}
+              />
 
-          <ConvertPanel hasVideo={hasVideoStream} mediaSelected={hasMedia} isBusy={isBusy} onConvert={handleConvert} />
+              <ConvertPanel
+                hasVideo={hasVideoStream}
+                mediaSelected={hasMedia}
+                isBusy={isBusy}
+                onConvert={handleConvert}
+              />
+            </>
+          )}
         </aside>
       </main>
 
@@ -537,12 +643,16 @@ export default function App() {
         open={settingsOpen}
         startInTheaterMode={startInTheaterMode}
         defaultPreset={preset}
+        defaultPhotoPreset={photoPreset}
+        defaultPhotoFormat={photoFormat}
         outputDirectory={outputDirectory}
         defaultPlayerStatus={defaultPlayerStatus}
         isBusy={isBusy}
         onClose={() => setSettingsOpen(false)}
         onStartInTheaterModeChange={handleStartInTheaterModeChange}
         onDefaultPresetChange={handlePresetChange}
+        onDefaultPhotoPresetChange={handlePhotoPresetChange}
+        onDefaultPhotoFormatChange={handlePhotoFormatChange}
         onChooseOutputDirectory={handleChooseOutputDirectory}
         onClearOutputDirectory={handleClearOutputDirectory}
         onOpenDefaultPlayerSettings={handleSetDefaultPlayer}

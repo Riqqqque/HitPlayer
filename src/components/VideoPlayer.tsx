@@ -1,9 +1,10 @@
-import { AlertCircle, Film, LoaderCircle, Music } from "lucide-react";
+import { AlertCircle, Film, Image as ImageIcon, LoaderCircle, Music } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { extensionFromPath, filenameFromPath, secondsToTimestamp } from "../lib/format";
 
 const VIDEO_PREVIEW_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
 const AUDIO_PREVIEW_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac"]);
+const IMAGE_PREVIEW_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff"]);
 
 type VideoPlayerProps = {
   filePath: string | null;
@@ -14,6 +15,7 @@ type VideoPlayerProps = {
   previewFailed: boolean;
   theaterMode: boolean;
   isAudioOnly: boolean;
+  isImage: boolean;
   width: number | null;
   height: number | null;
   onPreviewFailed: () => void;
@@ -26,7 +28,11 @@ export function canTryPreview(path: string | null): boolean {
   }
 
   const extension = extensionFromPath(path);
-  return VIDEO_PREVIEW_EXTENSIONS.has(extension) || AUDIO_PREVIEW_EXTENSIONS.has(extension);
+  return (
+    VIDEO_PREVIEW_EXTENSIONS.has(extension) ||
+    AUDIO_PREVIEW_EXTENSIONS.has(extension) ||
+    IMAGE_PREVIEW_EXTENSIONS.has(extension)
+  );
 }
 
 export function VideoPlayer({
@@ -38,6 +44,7 @@ export function VideoPlayer({
   previewFailed,
   theaterMode,
   isAudioOnly,
+  isImage,
   width,
   height,
   onPreviewFailed,
@@ -48,6 +55,7 @@ export function VideoPlayer({
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [intrinsicSize, setIntrinsicSize] = useState<{ width: number; height: number } | null>(null);
   const canPreview = !!previewUrl && !previewFailed;
+  const HeaderIcon = isImage ? ImageIcon : isAudioOnly ? Music : Film;
 
   const aspectRatio = useMemo(() => {
     const mediaWidth = width && width > 0 ? width : intrinsicSize?.width;
@@ -83,13 +91,13 @@ export function VideoPlayer({
   }, [aspectRatio, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
-    if (!mediaRef.current || !previewUrl) {
+    if (isImage || !mediaRef.current || !previewUrl) {
       return;
     }
 
     setIntrinsicSize(null);
     mediaRef.current.load();
-  }, [isAudioOnly, previewUrl]);
+  }, [isAudioOnly, isImage, previewUrl]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -123,13 +131,13 @@ export function VideoPlayer({
     observer.observe(viewport);
 
     return () => observer.disconnect();
-  }, [canPreview, theaterMode]);
+  }, [canPreview, isAudioOnly, isImage, theaterMode]);
 
   return (
     <section className="flex h-full min-h-0 flex-col rounded-lg border border-white/10 bg-black shadow-panel">
       <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2 text-sm text-slate-300">
-          <Film size={17} className="shrink-0 text-hit-300" />
+          <HeaderIcon size={17} className="shrink-0 text-hit-300" />
           <span className="truncate">{filenameFromPath(filePath)}</span>
         </div>
         <span className="text-xs text-slate-500">{secondsToTimestamp(durationSeconds)}</span>
@@ -137,7 +145,31 @@ export function VideoPlayer({
 
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-lg bg-black">
         {canPreview ? (
-          isAudioOnly ? (
+          isImage ? (
+            <div
+              ref={viewportRef}
+              className={
+                theaterMode
+                  ? "absolute inset-x-4 bottom-10 top-4 flex items-center justify-center overflow-hidden"
+                  : "absolute inset-0 flex items-center justify-center overflow-hidden"
+              }
+            >
+              <div className="flex max-h-full max-w-full items-center justify-center" style={fittedFrameStyle}>
+                <img
+                  src={previewUrl}
+                  alt={filenameFromPath(filePath)}
+                  className="block h-full w-full rounded-md bg-black object-contain"
+                  onError={onPreviewFailed}
+                  onLoad={(event) => {
+                    const image = event.currentTarget;
+                    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+                      setIntrinsicSize({ width: image.naturalWidth, height: image.naturalHeight });
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          ) : isAudioOnly ? (
             <div className="absolute inset-0 grid place-items-center overflow-hidden px-6">
               <div className="w-full max-w-3xl rounded-lg border border-white/10 bg-ink-900/80 p-6 shadow-panel">
                 <div className="mb-5 flex items-center gap-4">
@@ -200,6 +232,8 @@ export function VideoPlayer({
               <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-lg border border-white/10 bg-white/5 text-hit-300">
                 {previewState === "preparing" ? (
                   <LoaderCircle size={30} className="animate-spin" />
+                ) : filePath && isImage ? (
+                  <ImageIcon size={30} />
                 ) : (
                   <AlertCircle size={30} />
                 )}
@@ -209,13 +243,13 @@ export function VideoPlayer({
                   ? previewState === "preparing"
                     ? "Preparing playable preview..."
                     : "Preview is not available for this file."
-                  : "Open a video to get started."}
+                  : "Open media to get started."}
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-400">
                 {filePath
                   ? previewMessage ??
                     "This file may not preview in HitPlayer yet, but FFmpeg may still process it."
-                  : "Open a video or audio file to preview and trim it here."}
+                  : "Open a video, audio clip, or photo to preview it here."}
               </p>
             </div>
           </div>

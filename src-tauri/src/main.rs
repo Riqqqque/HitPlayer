@@ -5,7 +5,8 @@ mod models;
 mod paths;
 
 use commands::ffmpeg::{
-    compress_video, convert_to_mp4, detect_encoders, fast_trim, precise_trim, prepare_preview,
+    compress_photo, compress_video, convert_to_mp4, detect_encoders, fast_trim, precise_trim,
+    prepare_preview,
 };
 use commands::ffprobe::probe_video;
 use commands::jobs::{cancel_job, JobManager};
@@ -33,6 +34,7 @@ fn main() {
             prepare_preview,
             fast_trim,
             precise_trim,
+            compress_photo,
             compress_video,
             convert_to_mp4,
             cancel_job,

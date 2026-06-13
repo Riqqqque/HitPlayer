@@ -8,6 +8,9 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus", ".wma", ".aiff", ".aif",
     ".mka",
 ];
+const IMAGE_EXTENSIONS: &[&str] = &[
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff",
+];
 
 #[tauri::command]
 pub fn register_default_player() -> Result<(), String> {
@@ -108,7 +111,11 @@ fn register_default_player_internal() -> Result<(), String> {
     let (file_associations, _) = capabilities
         .create_subkey("FileAssociations")
         .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    for extension in VIDEO_EXTENSIONS.iter().chain(AUDIO_EXTENSIONS.iter()) {
+    for extension in VIDEO_EXTENSIONS
+        .iter()
+        .chain(AUDIO_EXTENSIONS.iter())
+        .chain(IMAGE_EXTENSIONS.iter())
+    {
         file_associations
             .set_value(*extension, &"HitPlayer.Media")
             .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
@@ -135,7 +142,11 @@ fn register_default_player_internal() -> Result<(), String> {
     let (supported_types, _) = application
         .create_subkey("SupportedTypes")
         .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
-    for extension in VIDEO_EXTENSIONS.iter().chain(AUDIO_EXTENSIONS.iter()) {
+    for extension in VIDEO_EXTENSIONS
+        .iter()
+        .chain(AUDIO_EXTENSIONS.iter())
+        .chain(IMAGE_EXTENSIONS.iter())
+    {
         supported_types
             .set_value(*extension, &"")
             .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;

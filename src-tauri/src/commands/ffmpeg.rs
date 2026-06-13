@@ -1,7 +1,8 @@
 use crate::commands::ffprobe::probe_video_internal;
 use crate::commands::jobs::{path_arg, run_ffmpeg_job, FfmpegJob, JobManager};
 use crate::models::{
-    CompressOptions, CompressionPreset, ConvertOptions, EncoderSupport, JobResult, PreviewResult,
+    CompressOptions, CompressionPreset, ConvertOptions, EncoderSupport, JobResult, MediaKind,
+    PhotoCompressOptions, PhotoCompressionFormat, PhotoCompressionPreset, PreviewResult,
     TrimOptions, VideoMetadata,
 };
 use crate::paths::{binary_path, default_output_path};
@@ -280,6 +281,67 @@ pub async fn compress_video(
 }
 
 #[tauri::command]
+pub async fn compress_photo(
+    app: AppHandle,
+    state: State<'_, JobManager>,
+    options: PhotoCompressOptions,
+) -> Result<JobResult, String> {
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let input = Path::new(&options.input_path);
+        if !input.is_file() {
+            return Err("Select a photo first.".to_string());
+        }
+
+        if matches!(options.format, PhotoCompressionFormat::Webp) {
+            let encoders = detect_encoders_internal(&app)?;
+            if !encoders.has_libwebp {
+                return Err("WebP encoder unavailable in this FFmpeg build.".to_string());
+            }
+        }
+
+        let metadata = probe_video_internal(&app, input)?;
+        if metadata.media_kind != MediaKind::Image {
+            return Err("Photo compression is only available for image files.".to_string());
+        }
+
+        let output_path = default_output_path(
+            input,
+            options.preset.suffix(),
+            options.output_path.as_deref(),
+            options.output_directory.as_deref(),
+            options.format.extension(),
+        )?;
+        let mut args = vec![
+            "-y".to_string(),
+            "-i".to_string(),
+            path_arg(input),
+            "-map".to_string(),
+            "0:v:0".to_string(),
+            "-frames:v".to_string(),
+            "1".to_string(),
+        ];
+        args.extend(photo_scale_args(&metadata, &options.preset));
+        args.extend(photo_compression_args(&options.preset, &options.format));
+        args.extend(progress_args());
+        args.push(path_arg(&output_path));
+
+        run_ffmpeg_job(
+            app,
+            manager,
+            FfmpegJob {
+                name: "Compress Photo".to_string(),
+                args,
+                output_path,
+                total_duration: Some(1.0),
+            },
+        )
+    })
+    .await
+    .map_err(|error| format!("Photo compression failed: {error}"))?
+}
+
+#[tauri::command]
 pub async fn convert_to_mp4(
     app: AppHandle,
     state: State<'_, JobManager>,
@@ -374,6 +436,7 @@ pub fn detect_encoders_internal(app: &AppHandle) -> Result<EncoderSupport, Strin
     Ok(EncoderSupport {
         has_libx264: encoders.contains("libx264"),
         has_libx265: encoders.contains("libx265"),
+        has_libwebp: encoders.contains("libwebp"),
         has_h264_nvenc: encoders.contains("h264_nvenc"),
         has_hevc_nvenc: encoders.contains("hevc_nvenc"),
         has_h264_amf: encoders.contains("h264_amf"),
@@ -639,6 +702,99 @@ fn compression_args(preset: &CompressionPreset, metadata: Option<&VideoMetadata>
         bitrate_arg(plan.audio_bitrate_bps),
     ]);
     args
+}
+
+fn photo_compression_args(
+    preset: &PhotoCompressionPreset,
+    format: &PhotoCompressionFormat,
+) -> Vec<String> {
+    match format {
+        PhotoCompressionFormat::Jpeg => vec![
+            "-c:v".to_string(),
+            "mjpeg".to_string(),
+            "-q:v".to_string(),
+            photo_jpeg_quality(preset).to_string(),
+            "-pix_fmt".to_string(),
+            "yuvj420p".to_string(),
+            "-update".to_string(),
+            "1".to_string(),
+        ],
+        PhotoCompressionFormat::Webp => vec![
+            "-c:v".to_string(),
+            "libwebp".to_string(),
+            "-quality".to_string(),
+            photo_webp_quality(preset).to_string(),
+            "-compression_level".to_string(),
+            photo_webp_compression_level(preset).to_string(),
+        ],
+    }
+}
+
+fn photo_scale_args(metadata: &VideoMetadata, preset: &PhotoCompressionPreset) -> Vec<String> {
+    let Some((width, height)) = photo_scaled_dimensions(
+        metadata.width,
+        metadata.height,
+        photo_long_edge_limit(preset),
+    ) else {
+        return Vec::new();
+    };
+
+    vec![
+        "-vf".to_string(),
+        format!("scale={width}:{height}:flags=lanczos"),
+    ]
+}
+
+fn photo_long_edge_limit(preset: &PhotoCompressionPreset) -> u32 {
+    match preset {
+        PhotoCompressionPreset::Balanced => 2560,
+        PhotoCompressionPreset::Small => 1920,
+        PhotoCompressionPreset::HighQuality => 3840,
+    }
+}
+
+fn photo_jpeg_quality(preset: &PhotoCompressionPreset) -> u8 {
+    match preset {
+        PhotoCompressionPreset::Balanced => 5,
+        PhotoCompressionPreset::Small => 8,
+        PhotoCompressionPreset::HighQuality => 3,
+    }
+}
+
+fn photo_webp_quality(preset: &PhotoCompressionPreset) -> u8 {
+    match preset {
+        PhotoCompressionPreset::Balanced => 78,
+        PhotoCompressionPreset::Small => 62,
+        PhotoCompressionPreset::HighQuality => 88,
+    }
+}
+
+fn photo_webp_compression_level(preset: &PhotoCompressionPreset) -> u8 {
+    match preset {
+        PhotoCompressionPreset::Balanced => 4,
+        PhotoCompressionPreset::Small => 6,
+        PhotoCompressionPreset::HighQuality => 4,
+    }
+}
+
+fn photo_scaled_dimensions(
+    width: Option<u32>,
+    height: Option<u32>,
+    long_edge_limit: u32,
+) -> Option<(u32, u32)> {
+    let width = width?;
+    let height = height?;
+    let longest = width.max(height);
+
+    if width == 0 || height == 0 || longest <= long_edge_limit {
+        return None;
+    }
+
+    let scale = f64::from(long_edge_limit) / f64::from(longest);
+    let scaled_width = ((f64::from(width) * scale).round() as u32).max(1);
+    let scaled_height = ((f64::from(height) * scale).round() as u32).max(1);
+
+    Some((scaled_width, scaled_height))
 }
 
 fn compression_encode_plan(
@@ -962,8 +1118,10 @@ mod tests {
             duration_seconds: Some(duration_seconds),
             width: Some(1920),
             height: Some(1080),
+            media_kind: MediaKind::Video,
             video_codec: Some("h264".to_string()),
             audio_codec: Some("aac".to_string()),
+            image_codec: None,
             container: Some("mov,mp4,m4a,3gp,3g2,mj2".to_string()),
             bitrate,
             file_size_bytes,
@@ -1054,5 +1212,29 @@ mod tests {
     #[test]
     fn preview_transcode_leaves_1080p_alone() {
         assert_eq!(preview_scaled_dimensions(Some(1920), Some(1080)), None);
+    }
+
+    #[test]
+    fn small_photo_preset_scales_long_edge_to_1920() {
+        assert_eq!(
+            photo_scaled_dimensions(
+                Some(4000),
+                Some(3000),
+                photo_long_edge_limit(&PhotoCompressionPreset::Small)
+            ),
+            Some((1920, 1440))
+        );
+    }
+
+    #[test]
+    fn photo_presets_get_more_aggressive_for_small_files() {
+        assert!(
+            photo_jpeg_quality(&PhotoCompressionPreset::Small)
+                > photo_jpeg_quality(&PhotoCompressionPreset::Balanced)
+        );
+        assert!(
+            photo_webp_quality(&PhotoCompressionPreset::Small)
+                < photo_webp_quality(&PhotoCompressionPreset::Balanced)
+        );
     }
 }
