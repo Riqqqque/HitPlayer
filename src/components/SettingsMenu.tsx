@@ -1,16 +1,20 @@
 import { FolderOpen, RotateCcw, Settings, X } from "lucide-react";
-import type { CompressionPreset } from "../lib/types";
+import type { CompressionPreset, PhotoCompressionFormat, PhotoCompressionPreset } from "../lib/types";
 
 type SettingsMenuProps = {
   open: boolean;
   startInTheaterMode: boolean;
   defaultPreset: CompressionPreset;
+  defaultPhotoPreset: PhotoCompressionPreset;
+  defaultPhotoFormat: PhotoCompressionFormat;
   outputDirectory: string | null;
   defaultPlayerStatus: string | null;
   isBusy: boolean;
   onClose: () => void;
   onStartInTheaterModeChange: (enabled: boolean) => void;
   onDefaultPresetChange: (preset: CompressionPreset) => void;
+  onDefaultPhotoPresetChange: (preset: PhotoCompressionPreset) => void;
+  onDefaultPhotoFormatChange: (format: PhotoCompressionFormat) => void;
   onChooseOutputDirectory: () => void;
   onClearOutputDirectory: () => void;
   onOpenDefaultPlayerSettings: () => void;
@@ -24,16 +28,26 @@ const PRESET_LABELS: Record<CompressionPreset, string> = {
   nvidia_fast: "NVIDIA Fast",
 };
 
+const PHOTO_PRESET_LABELS: Record<PhotoCompressionPreset, string> = {
+  balanced: "Balanced",
+  small: "Small File",
+  high_quality: "High Quality",
+};
+
 export function SettingsMenu({
   open,
   startInTheaterMode,
   defaultPreset,
+  defaultPhotoPreset,
+  defaultPhotoFormat,
   outputDirectory,
   defaultPlayerStatus,
   isBusy,
   onClose,
   onStartInTheaterModeChange,
   onDefaultPresetChange,
+  onDefaultPhotoPresetChange,
+  onDefaultPhotoFormatChange,
   onChooseOutputDirectory,
   onClearOutputDirectory,
   onOpenDefaultPlayerSettings,
@@ -92,6 +106,41 @@ export function SettingsMenu({
               ))}
             </select>
           </label>
+
+          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+            <span className="block text-sm font-semibold text-slate-100">Default photo compression</span>
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <label className="block text-xs text-slate-500">
+                Preset
+                <select
+                  className="field mt-2"
+                  value={defaultPhotoPreset}
+                  onChange={(event) =>
+                    onDefaultPhotoPresetChange(event.currentTarget.value as PhotoCompressionPreset)
+                  }
+                >
+                  {(Object.keys(PHOTO_PRESET_LABELS) as PhotoCompressionPreset[]).map((preset) => (
+                    <option key={preset} value={preset}>
+                      {PHOTO_PRESET_LABELS[preset]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs text-slate-500">
+                Format
+                <select
+                  className="field mt-2"
+                  value={defaultPhotoFormat}
+                  onChange={(event) =>
+                    onDefaultPhotoFormatChange(event.currentTarget.value as PhotoCompressionFormat)
+                  }
+                >
+                  <option value="jpeg">JPEG</option>
+                  <option value="webp">WebP</option>
+                </select>
+              </label>
+            </div>
+          </div>
 
           <div className="rounded-lg border border-white/10 bg-black/20 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">

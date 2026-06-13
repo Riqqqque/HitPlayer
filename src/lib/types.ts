@@ -1,4 +1,7 @@
 export type CompressionPreset = "balanced" | "small" | "high_quality" | "nvidia_fast";
+export type PhotoCompressionPreset = "balanced" | "small" | "high_quality";
+export type PhotoCompressionFormat = "jpeg" | "webp";
+export type MediaKind = "video" | "audio" | "image" | "unknown";
 
 export type StreamInfo = {
   index: number;
@@ -14,8 +17,10 @@ export type VideoMetadata = {
   durationSeconds: number | null;
   width: number | null;
   height: number | null;
+  mediaKind: MediaKind;
   videoCodec: string | null;
   audioCodec: string | null;
+  imageCodec: string | null;
   container: string | null;
   bitrate: number | null;
   fileSizeBytes: number;
@@ -25,6 +30,7 @@ export type VideoMetadata = {
 export type EncoderSupport = {
   hasLibx264: boolean;
   hasLibx265: boolean;
+  hasLibwebp: boolean;
   hasH264Nvenc: boolean;
   hasHevcNvenc: boolean;
   hasH264Amf: boolean;
@@ -63,6 +69,14 @@ export type TrimOptions = {
   inputPath: string;
   startSeconds: number;
   endSeconds: number;
+  outputPath?: string;
+  outputDirectory?: string;
+};
+
+export type PhotoCompressOptions = {
+  inputPath: string;
+  preset: PhotoCompressionPreset;
+  format: PhotoCompressionFormat;
   outputPath?: string;
   outputDirectory?: string;
 };

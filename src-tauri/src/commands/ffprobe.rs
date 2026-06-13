@@ -1,4 +1,4 @@
-use crate::models::{StreamInfo, VideoMetadata};
+use crate::models::{MediaKind, StreamInfo, VideoMetadata};
 use crate::paths::binary_path;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -44,10 +44,18 @@ pub fn probe_video_internal(app: &AppHandle, input: &Path) -> Result<VideoMetada
     let response: FfprobeResponse = serde_json::from_slice(&output.stdout)
         .map_err(|_| "Could not read media metadata.".to_string())?;
 
-    Ok(metadata_from_response(response, file_size_bytes))
+    Ok(metadata_from_response(
+        response,
+        file_size_bytes,
+        media_kind_from_path(input),
+    ))
 }
 
-fn metadata_from_response(response: FfprobeResponse, file_size_bytes: u64) -> VideoMetadata {
+fn metadata_from_response(
+    response: FfprobeResponse,
+    file_size_bytes: u64,
+    path_kind: Option<MediaKind>,
+) -> VideoMetadata {
     let streams: Vec<StreamInfo> = response
         .streams
         .iter()
@@ -62,29 +70,57 @@ fn metadata_from_response(response: FfprobeResponse, file_size_bytes: u64) -> Vi
         })
         .collect();
 
-    let video_stream = response.streams.iter().find(|stream| {
+    let visual_stream = response.streams.iter().find(|stream| {
         stream.codec_type.as_deref() == Some("video") && !stream.is_attached_picture()
     });
     let audio_stream = response
         .streams
         .iter()
         .find(|stream| stream.codec_type.as_deref() == Some("audio"));
+    let media_kind = path_kind.unwrap_or(match (visual_stream, audio_stream) {
+        (Some(_), _) => MediaKind::Video,
+        (None, Some(_)) => MediaKind::Audio,
+        _ => MediaKind::Unknown,
+    });
 
-    let duration_seconds = response
-        .format
-        .as_ref()
-        .and_then(|format| parse_optional_f64(format.duration.as_deref()))
-        .or_else(|| video_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref())))
-        .or_else(|| audio_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref())));
+    let duration_seconds = if media_kind == MediaKind::Image {
+        None
+    } else {
+        response
+            .format
+            .as_ref()
+            .and_then(|format| parse_optional_f64(format.duration.as_deref()))
+            .or_else(|| {
+                visual_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref()))
+            })
+            .or_else(|| {
+                audio_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref()))
+            })
+    };
 
     let format = response.format.as_ref();
+    let is_image = media_kind == MediaKind::Image;
 
     VideoMetadata {
         duration_seconds,
-        width: video_stream.and_then(|stream| stream.width),
-        height: video_stream.and_then(|stream| stream.height),
-        video_codec: video_stream.and_then(|stream| stream.codec_name.clone()),
-        audio_codec: audio_stream.and_then(|stream| stream.codec_name.clone()),
+        width: visual_stream.and_then(|stream| stream.width),
+        height: visual_stream.and_then(|stream| stream.height),
+        media_kind,
+        video_codec: if is_image {
+            None
+        } else {
+            visual_stream.and_then(|stream| stream.codec_name.clone())
+        },
+        audio_codec: if is_image {
+            None
+        } else {
+            audio_stream.and_then(|stream| stream.codec_name.clone())
+        },
+        image_codec: if is_image {
+            visual_stream.and_then(|stream| stream.codec_name.clone())
+        } else {
+            None
+        },
         container: format.and_then(|format| format.format_name.clone()),
         bitrate: format.and_then(|format| parse_optional_u64(format.bit_rate.as_deref())),
         file_size_bytes,
@@ -111,6 +147,18 @@ fn command_no_window(program: PathBuf) -> Command {
         command.creation_flags(0x08000000);
     }
     command
+}
+
+fn media_kind_from_path(path: &Path) -> Option<MediaKind> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())?
+        .to_ascii_lowercase();
+
+    match extension.as_str() {
+        "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" | "tif" | "tiff" => Some(MediaKind::Image),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,9 +248,11 @@ mod tests {
                 }),
             },
             1000,
+            None,
         );
 
         assert_eq!(metadata.duration_seconds, Some(12.5));
+        assert_eq!(metadata.media_kind, MediaKind::Audio);
     }
 
     #[test]
@@ -217,10 +267,45 @@ mod tests {
                 }),
             },
             1000,
+            None,
         );
 
         assert_eq!(metadata.video_codec, None);
         assert_eq!(metadata.width, None);
         assert_eq!(metadata.audio_codec, Some("mp3".to_string()));
+        assert_eq!(metadata.media_kind, MediaKind::Audio);
+    }
+
+    #[test]
+    fn image_path_is_treated_as_still_image() {
+        let metadata = metadata_from_response(
+            FfprobeResponse {
+                streams: vec![FfprobeStream {
+                    index: Some(0),
+                    codec_type: Some("video".to_string()),
+                    codec_name: Some("png".to_string()),
+                    width: Some(1280),
+                    height: Some(720),
+                    channels: None,
+                    sample_rate: None,
+                    duration: Some("0.04".to_string()),
+                    disposition: None,
+                }],
+                format: Some(FfprobeFormat {
+                    format_name: Some("png_pipe".to_string()),
+                    duration: Some("0.04".to_string()),
+                    bit_rate: None,
+                }),
+            },
+            2000,
+            Some(MediaKind::Image),
+        );
+
+        assert_eq!(metadata.media_kind, MediaKind::Image);
+        assert_eq!(metadata.duration_seconds, None);
+        assert_eq!(metadata.image_codec, Some("png".to_string()));
+        assert_eq!(metadata.video_codec, None);
+        assert_eq!(metadata.width, Some(1280));
+        assert_eq!(metadata.height, Some(720));
     }
 }

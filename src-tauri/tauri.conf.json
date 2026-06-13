@@ -57,6 +57,13 @@
         "ext": ["mp3", "wav", "m4a", "aac", "flac", "ogg", "oga", "opus", "wma", "aiff", "aif", "mka"],
         "mimeType": "audio/mpeg",
         "role": "Viewer"
+      },
+      {
+        "name": "HitPlayer Photo",
+        "description": "HitPlayer photo file",
+        "ext": ["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff"],
+        "mimeType": "image/jpeg",
+        "role": "Viewer"
       }
     ]
   }

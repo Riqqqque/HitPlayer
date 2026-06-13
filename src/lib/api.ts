@@ -3,6 +3,7 @@ import type {
   CompressionPreset,
   EncoderSupport,
   JobResult,
+  PhotoCompressOptions,
   PreviewResult,
   TrimOptions,
   VideoMetadata,
@@ -47,6 +48,10 @@ export function compressVideo(
   outputDirectory?: string,
 ): Promise<JobResult> {
   return invoke("compress_video", { options: { inputPath, preset, outputPath, outputDirectory } });
+}
+
+export function compressPhoto(options: PhotoCompressOptions): Promise<JobResult> {
+  return invoke("compress_photo", { options });
 }
 
 export function convertToMp4(

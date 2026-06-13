@@ -4,7 +4,7 @@
 
 **Play it. Cut it. Compress it.**
 
-HitPlayer is a dark, clean Windows media player and FFmpeg-powered video utility. It is built for normal desktop use first: open a video, preview it directly or through a local FFmpeg-prepared preview, trim it, shrink it, convert it, and get back to the output without fighting command lines.
+HitPlayer is a dark, clean Windows media player and FFmpeg-powered media utility. It is built for normal desktop use first: open a video, audio clip, or photo, preview it directly or through a local FFmpeg-prepared preview, trim clips, shrink files, convert videos, and get back to the output without fighting command lines.
 
 [![Build](https://github.com/Riqqqque/HitPlayer/actions/workflows/build.yml/badge.svg)](https://github.com/Riqqqque/HitPlayer/actions/workflows/build.yml)
 
@@ -18,7 +18,9 @@ The installer is current-user only, does not need admin rights, bundles FFmpeg/F
 
 - Opens common video files: MP4, MKV, MOV, AVI, WebM, M4V, FLV, WMV, TS, and M2TS.
 - Opens common audio files: MP3, WAV, M4A, AAC, FLAC, OGG, OPUS, WMA, AIFF, and MKA.
+- Opens common photo files: JPG, JPEG, PNG, WebP, GIF, BMP, TIFF, and TIF.
 - Previews MP4, MOV, WebM, and M4V through the built-in Windows WebView video engine.
+- Previews common photos directly in the main preview area.
 - Prepares a local MP4 preview for MKV and other files WebView cannot play directly, including files opened from mapped or UNC network drives.
 - Prepares a local M4A preview for audio formats the built-in player cannot open directly.
 - Still processes the original file with FFmpeg even when a local preview copy is needed.
@@ -28,10 +30,11 @@ The installer is current-user only, does not need admin rights, bundles FFmpeg/F
 - Precise trims with H.264/AAC when frame-accurate cuts matter.
 - Fast trims audio with stream copy and precise trims audio to compatible M4A/AAC.
 - Compresses with simple presets that target practical file sizes instead of bloating exports.
+- Compresses photos to JPEG or WebP with simple size-focused presets.
 - Converts odd files into compatible MP4 for easier sharing and playback.
 - Lets you choose a custom output folder from Settings.
 - Shows FFmpeg progress, speed, percent, logs, cancel, and output actions.
-- Registers itself as a Windows video app so you can pick it as the default player.
+- Registers itself as a Windows media app so you can pick it as the default player.
 
 ## Built For Windows
 
@@ -123,6 +126,8 @@ C:\Videos\HitPlayerExports\clip_compressed_small.mp4
 C:\Videos\HitPlayerExports\clip_compressed_high_quality.mp4
 C:\Videos\HitPlayerExports\clip_compressed_nvidia_fast.mp4
 C:\Videos\HitPlayerExports\clip_converted.mp4
+C:\Videos\HitPlayerExports\screenshot_photo_compressed_balanced.jpg
+C:\Videos\HitPlayerExports\screenshot_photo_compressed_small.webp
 ```
 
 Existing outputs are never overwritten. HitPlayer adds `_001`, `_002`, and so on.
@@ -146,6 +151,21 @@ Preset behavior:
 
 HitPlayer detects NVENC before enabling the NVIDIA preset.
 
+## Photo Compression
+
+Photo compression uses FFmpeg and the same progress/cancel/output-folder system as video jobs.
+
+Photo presets:
+
+- **Balanced**: caps the longest edge at 2560 px and keeps good detail.
+- **Small File**: caps the longest edge at 1920 px and uses stronger compression.
+- **High Quality**: caps the longest edge at 3840 px and favors detail over maximum shrink.
+
+Formats:
+
+- **JPEG**: default, broadly compatible, good for screenshots and photos.
+- **WebP**: usually smaller, enabled only when the bundled FFmpeg includes the WebP encoder.
+
 ## Gaming And Streaming Performance
 
 HitPlayer is tuned to stay out of the way while a game or stream is running:
@@ -160,7 +180,7 @@ NVIDIA Fast uses NVENC. It is quick, but it can still compete with OBS if OBS is
 
 ## Default Player
 
-The installer registers HitPlayer as a video file handler. Windows still requires the user to confirm default apps.
+The installer registers HitPlayer as a video, audio, and photo file handler. Windows still requires the user to confirm default apps.
 
 Inside HitPlayer, open **Settings > Windows defaults > Open Default Apps**. It registers HitPlayer for the current Windows user and opens Windows Default Apps so you can choose it for the media extensions you want.
 
@@ -193,11 +213,13 @@ For GitHub release builds, run the **Installer** workflow or push a version tag.
 
 - V1 preview uses the Windows WebView/browser video engine first, so some containers need a local MP4 preview cache before they play.
 - Audio preview uses the same built-in browser media engine first, then falls back to a local M4A preview for formats it cannot open directly.
+- Photo preview uses the WebView image engine directly. Some uncommon image formats may still compress with FFmpeg even if they do not preview.
 - FFmpeg processing supports many more formats than direct browser preview.
 - Fast Trim is not always frame-perfect because it stream-copies.
 - Fast Trim only shrinks by cutting duration because it does not re-encode.
 - Precise Trim is slower because it re-encodes.
-- Compression and compatible MP4 conversion are video-only in this version.
+- Compatible MP4 conversion is video-only in this version.
+- Photo compression may not shrink an already tiny or heavily optimized image.
 - NVIDIA Fast only works when NVENC is available.
 - libmpv or libVLC playback is planned later for near-VLC-level compatibility.
 
