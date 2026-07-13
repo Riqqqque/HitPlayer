@@ -10,6 +10,7 @@ use std::thread;
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_FFMPEG_LOG_BYTES: usize = 512 * 1024;
+const FFMPEG_LOG_TRIM_TARGET_BYTES: usize = MAX_FFMPEG_LOG_BYTES * 3 / 4;
 
 #[derive(Clone, Default)]
 pub struct JobManager {
@@ -20,11 +21,18 @@ pub struct JobManager {
 struct RunningJob {
     job_id: String,
     pid: Option<u32>,
+    process_exited: bool,
+    output_path: PathBuf,
     canceled: Arc<AtomicBool>,
 }
 
 impl JobManager {
-    fn reserve(&self, job_id: String, canceled: Arc<AtomicBool>) -> Result<(), String> {
+    fn reserve(
+        &self,
+        job_id: String,
+        canceled: Arc<AtomicBool>,
+        output_path: PathBuf,
+    ) -> Result<(), String> {
         let mut current = self
             .current
             .lock()
@@ -35,6 +43,8 @@ impl JobManager {
         *current = Some(RunningJob {
             job_id,
             pid: None,
+            process_exited: false,
+            output_path,
             canceled,
         });
         Ok(())
@@ -56,7 +66,16 @@ impl JobManager {
         }
     }
 
-    fn cancel_current(&self) -> Result<(), String> {
+    fn mark_process_exited(&self, job_id: &str) {
+        if let Ok(mut current) = self.current.lock() {
+            if let Some(job) = current.as_mut().filter(|job| job.job_id == job_id) {
+                job.pid = None;
+                job.process_exited = true;
+            }
+        }
+    }
+
+    pub(crate) fn cancel_current(&self) -> Result<(), String> {
         let current = self
             .current
             .lock()
@@ -64,10 +83,15 @@ impl JobManager {
             .clone();
 
         if let Some(job) = current {
+            if job.process_exited {
+                return Ok(());
+            }
+
             job.canceled.store(true, Ordering::SeqCst);
             if let Some(pid) = job.pid {
                 kill_process_tree(pid)?;
             }
+            remove_incomplete_output(&job.output_path);
         }
 
         Ok(())
@@ -91,11 +115,20 @@ pub fn run_ffmpeg_job(
     manager: JobManager,
     job: FfmpegJob,
 ) -> Result<JobResult, String> {
-    let ffmpeg = binary_path(&app, "ffmpeg")?;
+    let ffmpeg = match binary_path(&app, "ffmpeg") {
+        Ok(path) => path,
+        Err(error) => {
+            remove_incomplete_output(&job.output_path);
+            return Err(error);
+        }
+    };
     let job_id = uuid::Uuid::new_v4().to_string();
     let canceled = Arc::new(AtomicBool::new(false));
 
-    manager.reserve(job_id.clone(), canceled.clone())?;
+    if let Err(error) = manager.reserve(job_id.clone(), canceled.clone(), job.output_path.clone()) {
+        remove_incomplete_output(&job.output_path);
+        return Err(error);
+    }
     emit_progress(
         &app,
         JobProgress {
@@ -120,6 +153,7 @@ pub fn run_ffmpeg_job(
         Ok(child) => child,
         Err(error) => {
             manager.clear(&job_id);
+            remove_incomplete_output(&job.output_path);
             return Err(format!("Could not start FFmpeg: {error}"));
         }
     };
@@ -148,10 +182,8 @@ pub fn run_ffmpeg_job(
         thread::spawn(move || read_log(stderr, log))
     });
 
-    let status = child.wait().map_err(|error| {
-        manager.clear(&job_id);
-        format!("FFmpeg job failed: {error}")
-    })?;
+    let wait_result = child.wait();
+    manager.mark_process_exited(&job_id);
 
     if let Some(thread) = stdout_thread {
         let _ = thread.join();
@@ -163,6 +195,34 @@ pub fn run_ffmpeg_job(
     let log_text = log.lock().map(|log| log.clone()).unwrap_or_default();
     let was_canceled = canceled.load(Ordering::SeqCst);
     manager.clear(&job_id);
+
+    let status = match wait_result {
+        Ok(status) => status,
+        Err(error) => {
+            remove_incomplete_output(&job.output_path);
+            let message = format!("FFmpeg job failed: {error}");
+            emit_progress(
+                &app,
+                JobProgress {
+                    job_id,
+                    phase: JobPhase::Failed,
+                    percent: 0.0,
+                    out_time_seconds: None,
+                    speed: None,
+                    fps: None,
+                    message: Some("Export failed. Open details for FFmpeg log.".to_string()),
+                },
+            );
+            return Ok(JobResult {
+                success: false,
+                output_path: job.output_path.to_string_lossy().to_string(),
+                duration_seconds: job.total_duration,
+                log: log_text,
+                canceled: false,
+                error: Some(message),
+            });
+        }
+    };
 
     if was_canceled {
         remove_incomplete_output(&job.output_path);
@@ -266,26 +326,25 @@ fn read_progress<R: std::io::Read>(
                 fps = value.parse::<f64>().ok();
             }
             "progress" => {
-                let phase = if value == "end" {
-                    JobPhase::Finished
-                } else {
-                    JobPhase::Running
-                };
-                let percent = progress_percent(
-                    total_duration,
-                    out_time_seconds,
-                    matches!(phase, JobPhase::Finished),
-                );
+                let finalizing = value == "end";
+                let percent = progress_percent(total_duration, out_time_seconds);
                 emit_progress(
                     &app,
                     JobProgress {
                         job_id: job_id.clone(),
-                        phase,
+                        phase: JobPhase::Running,
                         percent,
                         out_time_seconds,
                         speed: speed.clone(),
                         fps,
-                        message: Some("Running FFmpeg.".to_string()),
+                        message: Some(
+                            if finalizing {
+                                "Finalizing output."
+                            } else {
+                                "Running FFmpeg."
+                            }
+                            .to_string(),
+                        ),
                     },
                 );
             }
@@ -305,7 +364,7 @@ fn append_log(log: &Arc<Mutex<String>>, line: &str) {
         log.push_str(line);
         if log.len() > MAX_FFMPEG_LOG_BYTES {
             let marker = "[older FFmpeg log trimmed]\n";
-            let keep_bytes = MAX_FFMPEG_LOG_BYTES.saturating_sub(marker.len());
+            let keep_bytes = FFMPEG_LOG_TRIM_TARGET_BYTES.saturating_sub(marker.len());
             let mut drain_to = log.len().saturating_sub(keep_bytes);
             while drain_to < log.len() && !log.is_char_boundary(drain_to) {
                 drain_to += 1;
@@ -316,15 +375,7 @@ fn append_log(log: &Arc<Mutex<String>>, line: &str) {
     }
 }
 
-fn progress_percent(
-    total_duration: Option<f64>,
-    out_time_seconds: Option<f64>,
-    finished: bool,
-) -> f64 {
-    if finished {
-        return 100.0;
-    }
-
+fn progress_percent(total_duration: Option<f64>, out_time_seconds: Option<f64>) -> f64 {
     match (total_duration, out_time_seconds) {
         (Some(total), Some(out_time)) if total > 0.0 => {
             ((out_time / total) * 100.0).clamp(0.0, 99.0)
@@ -457,6 +508,39 @@ mod tests {
         remove_incomplete_output(&partial);
 
         assert!(!partial.exists());
+    }
+
+    #[test]
+    fn log_trimming_keeps_recent_output_without_trimming_every_line() {
+        let log = Arc::new(Mutex::new(String::new()));
+        let old = "x".repeat(MAX_FFMPEG_LOG_BYTES);
+
+        append_log(&log, &old);
+        append_log(&log, "newest line\n");
+
+        let captured = log.lock().unwrap();
+        assert!(captured.len() <= FFMPEG_LOG_TRIM_TARGET_BYTES + "newest line\n".len());
+        assert!(captured.starts_with("[older FFmpeg log trimmed]\n"));
+        assert!(captured.ends_with("newest line\n"));
+    }
+
+    #[test]
+    fn late_cancel_does_not_mark_a_finished_process_as_canceled() {
+        let manager = JobManager::default();
+        let canceled = Arc::new(AtomicBool::new(false));
+        manager
+            .reserve(
+                "finished-job".to_string(),
+                canceled.clone(),
+                temp_file_path("finished.mp4"),
+            )
+            .unwrap();
+        manager.mark_process_exited("finished-job");
+
+        manager.cancel_current().unwrap();
+
+        assert!(!canceled.load(Ordering::SeqCst));
+        manager.clear("finished-job");
     }
 
     #[cfg(windows)]

@@ -101,7 +101,7 @@ fn register_default_player_internal() -> Result<(), String> {
     capabilities
         .set_value(
             "ApplicationDescription",
-            &"HitPlayer media player and audio/video utility",
+            &"HitPlayer media player and audio/video/photo utility",
         )
         .map_err(|error| format!("Could not register HitPlayer with Windows: {error}"))?;
     capabilities
