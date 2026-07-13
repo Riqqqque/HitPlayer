@@ -14,7 +14,7 @@ use commands::system::{open_output_folder, reveal_output_file};
 use tauri::Manager;
 
 fn main() {
-    let result = tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(JobManager::default())
         .setup(|app| {
             if let Some(icon) = app.default_window_icon().cloned() {
@@ -43,9 +43,15 @@ fn main() {
             open_output_folder,
             reveal_output_file
         ])
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!());
 
-    if let Err(error) = result {
-        eprintln!("HitPlayer failed to start: {error}");
+    match app {
+        Ok(app) => app.run(|app_handle, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                let manager = app_handle.state::<JobManager>();
+                let _ = manager.cancel_current();
+            }
+        }),
+        Err(error) => eprintln!("HitPlayer failed to start: {error}"),
     }
 }

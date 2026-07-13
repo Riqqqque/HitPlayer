@@ -12,6 +12,10 @@ body,
   min-height: 100%;
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
   overflow: hidden;
@@ -19,8 +23,33 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
+}
+
+* {
+  scrollbar-color: #374151 #0d1118;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #0d1118;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid #0d1118;
+  border-radius: 6px;
+  background: #374151;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
 }
 
 video.hit-video-preview {
@@ -59,11 +88,11 @@ audio.hit-audio-preview {
 
 @layer components {
   .primary-button {
-    @apply inline-flex items-center justify-center rounded-lg bg-hit-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-hit-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400;
+    @apply inline-flex items-center justify-center rounded-lg bg-hit-500 px-3 py-2 text-sm font-semibold text-slate-950 transition hover:bg-hit-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-hit-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400;
   }
 
   .secondary-button {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-45;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2 text-sm font-medium text-slate-200 transition hover:border-white/20 hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-hit-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950 disabled:cursor-not-allowed disabled:opacity-45;
   }
 
   .field {
@@ -71,7 +100,7 @@ audio.hit-audio-preview {
   }
 
   .preset-button {
-    @apply min-h-[72px] rounded-lg border border-white/10 bg-black/20 p-3 text-left transition hover:border-white/20 disabled:cursor-not-allowed disabled:opacity-45;
+    @apply min-h-[72px] rounded-lg border border-white/10 bg-black/20 p-3 text-left transition hover:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-hit-400/70 disabled:cursor-not-allowed disabled:opacity-45;
   }
 
   .preset-button span {
@@ -97,6 +126,17 @@ audio.hit-audio-preview {
   .progress-bar-indeterminate {
     width: 45%;
     animation: indeterminate 1.15s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 

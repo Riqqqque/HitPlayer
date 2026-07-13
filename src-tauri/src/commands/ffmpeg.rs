@@ -15,6 +15,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 
 const PREVIEW_CACHE_DAYS: u64 = 7;
+const PREVIEW_CACHE_VERSION: u8 = 2;
+const MIN_USEFUL_COMPRESSION_BITRATE_BPS: u64 = 96_000;
 
 #[tauri::command]
 pub async fn detect_encoders(app: AppHandle) -> Result<EncoderSupport, String> {
@@ -241,6 +243,12 @@ pub async fn compress_video(
                 "Video compression is only available for video files right now.".to_string(),
             );
         }
+        if source_is_too_small_to_compress(&metadata) {
+            return Err(
+                "This video is already too small to compress without increasing its size."
+                    .to_string(),
+            );
+        }
         let output_path = default_output_path(
             input,
             options.preset.suffix(),
@@ -434,13 +442,21 @@ pub fn detect_encoders_internal(app: &AppHandle) -> Result<EncoderSupport, Strin
     let encoders = format!("{stdout}\n{stderr}");
 
     Ok(EncoderSupport {
-        has_libx264: encoders.contains("libx264"),
-        has_libx265: encoders.contains("libx265"),
-        has_libwebp: encoders.contains("libwebp"),
-        has_h264_nvenc: encoders.contains("h264_nvenc"),
-        has_hevc_nvenc: encoders.contains("hevc_nvenc"),
-        has_h264_amf: encoders.contains("h264_amf"),
-        has_h264_qsv: encoders.contains("h264_qsv"),
+        has_libx264: encoder_available(&encoders, "libx264"),
+        has_libx265: encoder_available(&encoders, "libx265"),
+        has_libwebp: encoder_available(&encoders, "libwebp"),
+        has_h264_nvenc: encoder_available(&encoders, "h264_nvenc"),
+        has_hevc_nvenc: encoder_available(&encoders, "hevc_nvenc"),
+        has_h264_amf: encoder_available(&encoders, "h264_amf"),
+        has_h264_qsv: encoder_available(&encoders, "h264_qsv"),
+    })
+}
+
+fn encoder_available(encoders: &str, name: &str) -> bool {
+    encoders.lines().any(|line| {
+        let mut fields = line.split_whitespace();
+        let _flags = fields.next();
+        fields.next() == Some(name)
     })
 }
 
@@ -458,25 +474,35 @@ fn prepare_preview_internal(
     }
 
     let metadata = probe_video_internal(app, input)?;
-    if !has_video_stream(&metadata) && !has_audio_stream(&metadata) {
+    let is_image = metadata.media_kind == MediaKind::Image;
+    if !is_image && !has_video_stream(&metadata) && !has_audio_stream(&metadata) {
         return Err("This file does not contain a supported audio or video stream.".to_string());
     }
 
     let audio_only = is_audio_only(&metadata);
-    let can_copy_video = !audio_only
+    let can_copy_video = !is_image
+        && !audio_only
         && !force_transcode
         && metadata
             .video_codec
             .as_deref()
             .is_some_and(|codec| codec.eq_ignore_ascii_case("h264"));
-    let method = if audio_only {
+    let method = if is_image {
+        "image_preview"
+    } else if audio_only {
         "audio_preview"
     } else if can_copy_video {
         "stream_copy"
     } else {
         "transcode"
     };
-    let preview_extension = if audio_only { "m4a" } else { "mp4" };
+    let preview_extension = if is_image {
+        "png"
+    } else if audio_only {
+        "m4a"
+    } else {
+        "mp4"
+    };
     let output_path = preview_cache_path(input, method, preview_extension)?;
 
     cleanup_preview_cache(output_path.parent().unwrap_or_else(|| Path::new("")));
@@ -500,10 +526,26 @@ fn prepare_preview_internal(
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create preview cache: {error}"))?;
     }
+    let work_path = preview_work_path(&output_path)?;
+    let _ = fs::remove_file(&work_path);
 
     let mut args = vec!["-y".to_string(), "-i".to_string(), path_arg(input)];
 
-    if audio_only {
+    if is_image {
+        args.extend([
+            "-map".to_string(),
+            "0:v:0".to_string(),
+            "-frames:v".to_string(),
+            "1".to_string(),
+        ]);
+        args.extend(preview_scale_args(&metadata));
+        args.extend([
+            "-c:v".to_string(),
+            "png".to_string(),
+            "-update".to_string(),
+            "1".to_string(),
+        ]);
+    } else if audio_only {
         args.extend([
             "-map".to_string(),
             "0:a:0".to_string(),
@@ -556,9 +598,11 @@ fn prepare_preview_internal(
         ]);
     }
 
-    args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+    if !is_image {
+        args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+    }
     args.extend(progress_args());
-    args.push(path_arg(&output_path));
+    args.push(path_arg(&work_path));
 
     let result = run_ffmpeg_job(
         app.clone(),
@@ -566,8 +610,12 @@ fn prepare_preview_internal(
         FfmpegJob {
             name: "Preparing Preview".to_string(),
             args,
-            output_path: output_path.clone(),
-            total_duration: metadata.duration_seconds,
+            output_path: work_path.clone(),
+            total_duration: if is_image {
+                Some(1.0)
+            } else {
+                metadata.duration_seconds
+            },
         },
     )?;
 
@@ -576,11 +624,13 @@ fn prepare_preview_internal(
     }
 
     if !result.success {
-        let _ = fs::remove_file(&output_path);
+        let _ = fs::remove_file(&work_path);
         return Err(
             "This file cannot be previewed yet, but FFmpeg may still process it.".to_string(),
         );
     }
+
+    publish_preview(&work_path, &output_path)?;
 
     Ok(PreviewResult {
         preview_path: output_path.to_string_lossy().to_string(),
@@ -786,15 +836,31 @@ fn photo_scaled_dimensions(
     let height = height?;
     let longest = width.max(height);
 
-    if width == 0 || height == 0 || longest <= long_edge_limit {
+    if width == 0 || height == 0 {
         return None;
     }
 
-    let scale = f64::from(long_edge_limit) / f64::from(longest);
-    let scaled_width = ((f64::from(width) * scale).round() as u32).max(1);
-    let scaled_height = ((f64::from(height) * scale).round() as u32).max(1);
+    let (scaled_width, scaled_height) = if longest > long_edge_limit {
+        let scale = f64::from(long_edge_limit) / f64::from(longest);
+        (
+            ((f64::from(width) * scale).round() as u32).max(1),
+            ((f64::from(height) * scale).round() as u32).max(1),
+        )
+    } else {
+        (width, height)
+    };
+    let scaled_width = make_even(scaled_width);
+    let scaled_height = make_even(scaled_height);
+
+    if scaled_width == width && scaled_height == height {
+        return None;
+    }
 
     Some((scaled_width, scaled_height))
+}
+
+fn make_even(value: u32) -> u32 {
+    value.saturating_sub(value % 2).max(2)
 }
 
 fn compression_encode_plan(
@@ -812,12 +878,13 @@ fn compression_encode_plan(
     let total_bps = match source_bitrate {
         Some(bitrate) => {
             let target_bps = ((bitrate as f64) * source_factor) as u64;
+            let source_cap = bitrate.saturating_mul(95) / 100;
             let floor_bps = (audio_bps + 250_000).min(bitrate.saturating_mul(9) / 10);
             target_bps
                 .min(cap_bps)
                 .max(floor_bps)
-                .min(bitrate.saturating_mul(95) / 100)
-                .max(96_000)
+                .min(source_cap.max(1))
+                .max(48_000.min(source_cap.max(1)))
         }
         None => fallback_bps.min(cap_bps).max(audio_bps + 250_000),
     };
@@ -871,6 +938,11 @@ fn source_bitrate_bps(metadata: Option<&VideoMetadata>) -> Option<u64> {
             }
         })
     })
+}
+
+fn source_is_too_small_to_compress(metadata: &VideoMetadata) -> bool {
+    source_bitrate_bps(Some(metadata))
+        .is_some_and(|bitrate| bitrate < MIN_USEFUL_COMPRESSION_BITRATE_BPS)
 }
 
 fn resolution_default_bitrate(width: Option<u32>, height: Option<u32>, fallback: u64) -> u64 {
@@ -1047,6 +1119,7 @@ fn preview_cache_path(
 
 fn preview_cache_key(input: &Path) -> String {
     let mut hasher = DefaultHasher::new();
+    PREVIEW_CACHE_VERSION.hash(&mut hasher);
     input.to_string_lossy().to_lowercase().hash(&mut hasher);
 
     if let Ok(metadata) = input.metadata() {
@@ -1060,6 +1133,53 @@ fn preview_cache_key(input: &Path) -> String {
     }
 
     format!("{:016x}", hasher.finish())
+}
+
+fn preview_work_path(output_path: &Path) -> Result<std::path::PathBuf, String> {
+    let parent = output_path
+        .parent()
+        .ok_or_else(|| "Could not create preview cache.".to_string())?;
+    let stem = output_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("preview");
+    let extension = output_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("mp4");
+
+    Ok(parent.join(format!(
+        "{stem}.part-{}.{}",
+        uuid::Uuid::new_v4(),
+        extension
+    )))
+}
+
+fn publish_preview(work_path: &Path, output_path: &Path) -> Result<(), String> {
+    if output_file_ready(output_path) {
+        let _ = fs::remove_file(work_path);
+        return Ok(());
+    }
+
+    match fs::rename(work_path, output_path) {
+        Ok(()) => Ok(()),
+        Err(_) if output_file_ready(output_path) => {
+            let _ = fs::remove_file(work_path);
+            Ok(())
+        }
+        Err(error) => {
+            let _ = fs::remove_file(work_path);
+            Err(format!("Could not save the prepared preview: {error}"))
+        }
+    }
+}
+
+fn output_file_ready(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .metadata()
+            .map(|metadata| metadata.len() > 0)
+            .unwrap_or(false)
 }
 
 fn safe_cache_stem(stem: &str) -> String {
@@ -1087,7 +1207,9 @@ fn cleanup_preview_cache(cache_dir: &Path) {
             .extension()
             .and_then(|extension| extension.to_str())
             .is_some_and(|extension| {
-                extension.eq_ignore_ascii_case("mp4") || extension.eq_ignore_ascii_case("m4a")
+                extension.eq_ignore_ascii_case("mp4")
+                    || extension.eq_ignore_ascii_case("m4a")
+                    || extension.eq_ignore_ascii_case("png")
             });
         if !is_preview {
             continue;
@@ -1151,6 +1273,13 @@ mod tests {
     }
 
     #[test]
+    fn extremely_low_bitrate_sources_are_rejected_before_compression() {
+        let metadata = metadata(120.0, 512 * 1024, Some(35_000));
+
+        assert!(source_is_too_small_to_compress(&metadata));
+    }
+
+    #[test]
     fn small_preset_is_smaller_than_balanced() {
         let metadata = metadata(120.0, 80 * 1024 * 1024, None);
         let balanced = compression_encode_plan(&CompressionPreset::Balanced, Some(&metadata));
@@ -1180,6 +1309,14 @@ mod tests {
         let args = preview_audio_args(Some("aac"));
 
         assert_eq!(args, vec!["-c:a".to_string(), "copy".to_string()]);
+    }
+
+    #[test]
+    fn encoder_detection_requires_an_exact_encoder_name() {
+        let output = " V..... libx264rgb RGB encoder\n V..... libwebp WebP encoder";
+
+        assert!(!encoder_available(output, "libx264"));
+        assert!(encoder_available(output, "libwebp"));
     }
 
     #[test]
@@ -1222,6 +1359,18 @@ mod tests {
                 Some(3000),
                 photo_long_edge_limit(&PhotoCompressionPreset::Small)
             ),
+            Some((1920, 1440))
+        );
+    }
+
+    #[test]
+    fn photo_dimensions_are_even_for_encoder_compatibility() {
+        assert_eq!(
+            photo_scaled_dimensions(Some(801), Some(601), 1920),
+            Some((800, 600))
+        );
+        assert_eq!(
+            photo_scaled_dimensions(Some(4001), Some(3000), 1920),
             Some((1920, 1440))
         );
     }

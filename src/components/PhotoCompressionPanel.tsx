@@ -82,7 +82,8 @@ export function PhotoCompressionPanel({
         Compress Photo
       </button>
       <p className="mt-3 text-xs leading-5 text-slate-500">
-        JPEG is the safest target for sharing. WebP usually gets smaller files when your bundled FFmpeg supports it.
+        JPEG is the safest target for sharing. WebP is usually smaller. Animated or multi-page sources save the
+        displayed first frame.
       </p>
     </section>
   );

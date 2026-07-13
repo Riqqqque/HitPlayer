@@ -17,7 +17,7 @@ export function TopBar({
   onToggleTheaterMode,
 }: TopBarProps) {
   return (
-    <header className="flex items-center justify-between border-b border-white/10 bg-ink-950/92 px-6 py-4 backdrop-blur">
+    <header className="flex shrink-0 items-center justify-between border-b border-white/10 bg-ink-950 px-6 py-4">
       <div className="flex items-center gap-3">
         <img
           src={appIcon}
@@ -48,7 +48,7 @@ export function TopBar({
           type="button"
           onClick={onOpenVideo}
           disabled={isBusy}
-          className="inline-flex items-center gap-2 rounded-lg bg-hit-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-sky-950/40 transition hover:bg-hit-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="primary-button gap-2 px-4 shadow-lg shadow-sky-950/40"
         >
           <FolderOpen size={18} />
           Open Media

@@ -3,6 +3,11 @@ export type PhotoCompressionPreset = "balanced" | "small" | "high_quality";
 export type PhotoCompressionFormat = "jpeg" | "webp";
 export type MediaKind = "video" | "audio" | "image" | "unknown";
 
+export type PlaybackAudioState = {
+  volume: number;
+  muted: boolean;
+};
+
 export type StreamInfo = {
   index: number;
   codecType: string | null;
@@ -61,7 +66,7 @@ export type JobResult = {
 export type PreviewResult = {
   previewPath: string;
   usedCachedFile: boolean;
-  method: "stream_copy" | "transcode" | string;
+  method: "stream_copy" | "transcode" | "audio_preview" | "image_preview";
   log: string;
 };
 
