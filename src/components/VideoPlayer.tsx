@@ -1,10 +1,11 @@
 import { AlertCircle, Film, Image as ImageIcon, LoaderCircle, Music } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { extensionFromPath, filenameFromPath, secondsToTimestamp } from "../lib/format";
+import type { PlaybackAudioState } from "../lib/types";
 
 const VIDEO_PREVIEW_EXTENSIONS = new Set(["mp4", "mov", "webm", "m4v"]);
 const AUDIO_PREVIEW_EXTENSIONS = new Set(["mp3", "wav", "m4a", "aac", "ogg", "oga", "opus", "flac"]);
-const IMAGE_PREVIEW_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp", "tif", "tiff"]);
+const IMAGE_PREVIEW_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp"]);
 
 type VideoPlayerProps = {
   filePath: string | null;
@@ -16,8 +17,10 @@ type VideoPlayerProps = {
   theaterMode: boolean;
   isAudioOnly: boolean;
   isImage: boolean;
+  playbackAudio: PlaybackAudioState;
   width: number | null;
   height: number | null;
+  onPlaybackAudioChange: (audio: PlaybackAudioState) => void;
   onPreviewFailed: () => void;
   onTimeUpdate: (seconds: number) => void;
 };
@@ -45,8 +48,10 @@ export function VideoPlayer({
   theaterMode,
   isAudioOnly,
   isImage,
+  playbackAudio,
   width,
   height,
+  onPlaybackAudioChange,
   onPreviewFailed,
   onTimeUpdate,
 }: VideoPlayerProps) {
@@ -58,8 +63,8 @@ export function VideoPlayer({
   const HeaderIcon = isImage ? ImageIcon : isAudioOnly ? Music : Film;
 
   const aspectRatio = useMemo(() => {
-    const mediaWidth = width && width > 0 ? width : intrinsicSize?.width;
-    const mediaHeight = height && height > 0 ? height : intrinsicSize?.height;
+    const mediaWidth = intrinsicSize?.width ?? (width && width > 0 ? width : undefined);
+    const mediaHeight = intrinsicSize?.height ?? (height && height > 0 ? height : undefined);
 
     if (mediaWidth && mediaHeight && mediaWidth > 0 && mediaHeight > 0) {
       return mediaWidth / mediaHeight;
@@ -91,13 +96,32 @@ export function VideoPlayer({
   }, [aspectRatio, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
+    setIntrinsicSize(null);
+
     if (isImage || !mediaRef.current || !previewUrl) {
       return;
     }
 
-    setIntrinsicSize(null);
     mediaRef.current.load();
   }, [isAudioOnly, isImage, previewUrl]);
+
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media || isImage) {
+      return;
+    }
+
+    if (Math.abs(media.volume - playbackAudio.volume) >= 0.001) {
+      media.volume = playbackAudio.volume;
+    }
+    if (media.muted !== playbackAudio.muted) {
+      media.muted = playbackAudio.muted;
+    }
+  }, [isAudioOnly, isImage, playbackAudio.muted, playbackAudio.volume, previewUrl]);
+
+  function handleVolumeChange(media: HTMLMediaElement) {
+    onPlaybackAudioChange({ volume: media.volume, muted: media.muted });
+  }
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -190,6 +214,7 @@ export function VideoPlayer({
                   preload="metadata"
                   onError={onPreviewFailed}
                   onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+                  onVolumeChange={(event) => handleVolumeChange(event.currentTarget)}
                 >
                   <source src={previewUrl ?? undefined} />
                 </audio>
@@ -220,6 +245,7 @@ export function VideoPlayer({
                     }
                   }}
                   onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+                  onVolumeChange={(event) => handleVolumeChange(event.currentTarget)}
                 >
                   <source src={previewUrl ?? undefined} />
                 </video>

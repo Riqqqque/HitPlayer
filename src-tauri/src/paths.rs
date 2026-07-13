@@ -1,3 +1,5 @@
+use std::fs::OpenOptions;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
@@ -93,14 +95,12 @@ pub fn default_output_path(
         return Err("Cannot overwrite input file.".to_string());
     }
 
-    let unique = unique_output_path(output);
-
-    if let Some(parent) = unique.parent() {
+    if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("Output path is invalid: {error}"))?;
     }
 
-    Ok(unique)
+    reserve_unique_output_path(output)
 }
 
 fn default_output_name(
@@ -117,11 +117,7 @@ fn default_output_name(
     Ok(format!("{stem}_{suffix}.{default_extension}"))
 }
 
-fn unique_output_path(path: PathBuf) -> PathBuf {
-    if !path.exists() {
-        return path;
-    }
-
+fn reserve_unique_output_path(path: PathBuf) -> Result<PathBuf, String> {
     let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
     let stem = path
         .file_stem()
@@ -133,14 +129,31 @@ fn unique_output_path(path: PathBuf) -> PathBuf {
         .and_then(|extension| extension.to_str())
         .unwrap_or("mp4");
 
-    for index in 1..1000 {
-        let candidate = parent.join(format!("{stem}_{index:03}.{extension}"));
-        if !candidate.exists() {
-            return candidate;
+    for index in 0..1000 {
+        let candidate = if index == 0 {
+            path.clone()
+        } else {
+            parent.join(format!("{stem}_{index:03}.{extension}"))
+        };
+
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(_) => return Ok(candidate),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Output path is invalid: {error}")),
         }
     }
 
-    parent.join(format!("{stem}_{}.{}", uuid::Uuid::new_v4(), extension))
+    let candidate = parent.join(format!("{stem}_{}.{}", uuid::Uuid::new_v4(), extension));
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&candidate)
+        .map_err(|error| format!("Output path is invalid: {error}"))?;
+    Ok(candidate)
 }
 
 #[cfg(test)]
@@ -199,6 +212,59 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, root.join("custom.mp4"));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn output_names_are_reserved_across_calls() {
+        let root = temp_root();
+        let input = root.join("clip.mp4");
+
+        let first = default_output_path(&input, "trim_fast", None, None, "mp4").unwrap();
+        let second = default_output_path(&input, "trim_fast", None, None, "mp4").unwrap();
+
+        assert_eq!(
+            first,
+            root.join("HitPlayerExports").join("clip_trim_fast.mp4")
+        );
+        assert_eq!(
+            second,
+            root.join("HitPlayerExports").join("clip_trim_fast_001.mp4")
+        );
+        assert!(first.is_file());
+        assert!(second.is_file());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn concurrent_output_reservations_do_not_collide() {
+        let root = temp_root();
+        let input = root.join("clip.mp4");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let workers: Vec<_> = (0..2)
+            .map(|_| {
+                let input = input.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    default_output_path(&input, "converted", None, None, "mp4").unwrap()
+                })
+            })
+            .collect();
+
+        barrier.wait();
+        let outputs: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        let first = &outputs[0];
+        let second = &outputs[1];
+
+        assert_ne!(first, second);
+        assert!(first.is_file());
+        assert!(second.is_file());
 
         let _ = std::fs::remove_dir_all(root);
     }

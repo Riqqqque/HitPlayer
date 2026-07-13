@@ -1,9 +1,14 @@
 use crate::models::{MediaKind, StreamInfo, VideoMetadata};
 use crate::paths::binary_path;
 use serde::Deserialize;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
+
+const FFPROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tauri::command]
 pub async fn probe_video(app: AppHandle, path: String) -> Result<VideoMetadata, String> {
@@ -22,20 +27,18 @@ pub fn probe_video_internal(app: &AppHandle, input: &Path) -> Result<VideoMetada
         .len();
 
     let ffprobe = binary_path(app, "ffprobe")?;
-    let output = command_no_window(ffprobe)
+    let mut command = command_no_window(ffprobe);
+    command
         .args([
             "-v",
             "error",
             "-print_format",
             "json",
-            "-show_format",
-            "-show_streams",
+            "-show_entries",
+            "format=format_name,duration,bit_rate:stream=index,codec_type,codec_name,width,height,channels,sample_rate,duration:stream_disposition=attached_pic",
         ])
-        .arg(input)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|error| format!("Could not read media metadata: {error}"))?;
+        .arg(input);
+    let output = output_with_timeout(command, FFPROBE_TIMEOUT)?;
 
     if !output.status.success() {
         return Err("Could not read media metadata.".to_string());
@@ -63,9 +66,9 @@ fn metadata_from_response(
             index: stream.index.unwrap_or_default(),
             codec_type: stream.codec_type.clone(),
             codec_name: stream.codec_name.clone(),
-            width: stream.width,
-            height: stream.height,
-            channels: stream.channels,
+            width: positive_u32(stream.width),
+            height: positive_u32(stream.height),
+            channels: positive_u32(stream.channels),
             sample_rate: stream.sample_rate.clone(),
         })
         .collect();
@@ -103,8 +106,8 @@ fn metadata_from_response(
 
     VideoMetadata {
         duration_seconds,
-        width: visual_stream.and_then(|stream| stream.width),
-        height: visual_stream.and_then(|stream| stream.height),
+        width: visual_stream.and_then(|stream| positive_u32(stream.width)),
+        height: visual_stream.and_then(|stream| positive_u32(stream.height)),
         media_kind,
         video_codec: if is_image {
             None
@@ -131,11 +134,17 @@ fn metadata_from_response(
 fn parse_optional_f64(value: Option<&str>) -> Option<f64> {
     value
         .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| value.is_finite())
+        .filter(|value| value.is_finite() && *value > 0.0)
 }
 
 fn parse_optional_u64(value: Option<&str>) -> Option<u64> {
-    value.and_then(|value| value.parse::<u64>().ok())
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn positive_u32(value: Option<u32>) -> Option<u32> {
+    value.filter(|value| *value > 0)
 }
 
 fn command_no_window(program: PathBuf) -> Command {
@@ -147,6 +156,69 @@ fn command_no_window(program: PathBuf) -> Command {
         command.creation_flags(0x08000000);
     }
     command
+}
+
+fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not read media metadata: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Could not read media metadata.".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Could not read media metadata.".to_string())?;
+    let stdout_thread = thread::spawn(move || read_pipe(stdout));
+    let stderr_thread = thread::spawn(move || read_pipe(stderr));
+    let started = Instant::now();
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(50)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(
+                    "Could not read media metadata: FFprobe timed out while reading the file."
+                        .to_string(),
+                );
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(format!("Could not read media metadata: {error}"));
+            }
+        }
+    };
+
+    let stdout = stdout_thread
+        .join()
+        .map_err(|_| "Could not read media metadata.".to_string())?
+        .map_err(|error| format!("Could not read media metadata: {error}"))?;
+    let stderr = stderr_thread
+        .join()
+        .map_err(|_| "Could not read media metadata.".to_string())?
+        .map_err(|error| format!("Could not read media metadata: {error}"))?;
+
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn read_pipe(mut pipe: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    pipe.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 fn media_kind_from_path(path: &Path) -> Option<MediaKind> {
@@ -307,5 +379,13 @@ mod tests {
         assert_eq!(metadata.video_codec, None);
         assert_eq!(metadata.width, Some(1280));
         assert_eq!(metadata.height, Some(720));
+    }
+
+    #[test]
+    fn invalid_numeric_metadata_is_ignored() {
+        assert_eq!(parse_optional_f64(Some("-2")), None);
+        assert_eq!(parse_optional_f64(Some("NaN")), None);
+        assert_eq!(parse_optional_u64(Some("0")), None);
+        assert_eq!(positive_u32(Some(0)), None);
     }
 }

@@ -4,10 +4,11 @@ export function secondsToTimestamp(seconds: number | null | undefined): string {
   }
 
   const clamped = Math.max(0, seconds);
-  const hours = Math.floor(clamped / 3600);
-  const minutes = Math.floor((clamped % 3600) / 60);
-  const wholeSeconds = Math.floor(clamped % 60);
-  const millis = Math.floor((clamped - Math.floor(clamped)) * 1000);
+  const totalMilliseconds = Math.round(clamped * 1000);
+  const hours = Math.floor(totalMilliseconds / 3_600_000);
+  const minutes = Math.floor((totalMilliseconds % 3_600_000) / 60_000);
+  const wholeSeconds = Math.floor((totalMilliseconds % 60_000) / 1000);
+  const millis = totalMilliseconds % 1000;
 
   return `${hours.toString().padStart(2, "0")}:${minutes
     .toString()
@@ -25,7 +26,7 @@ export function formatSelectedDuration(startSeconds: number, endSeconds: number)
 }
 
 export function formatFileSize(bytes: number | null | undefined): string {
-  if (bytes == null || bytes < 0) {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) {
     return "Unknown";
   }
 
