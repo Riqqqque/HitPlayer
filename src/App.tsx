@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CompressionPanel } from "./components/CompressionPanel";
 import { ConvertPanel } from "./components/ConvertPanel";
 import { FileInfoCard } from "./components/FileInfoCard";
@@ -30,18 +30,23 @@ import type {
   EncoderSupport,
   JobProgress,
   JobResult,
+  PlaybackAudioState,
   PhotoCompressionFormat,
   PhotoCompressionPreset,
   VideoMetadata,
 } from "./lib/types";
 
 const SETTINGS_KEYS = {
+  playbackAudio: "hitplayer.playbackAudio",
   startInTheaterMode: "hitplayer.startInTheaterMode",
   defaultCompressionPreset: "hitplayer.defaultCompressionPreset",
   defaultPhotoCompressionFormat: "hitplayer.defaultPhotoCompressionFormat",
   defaultPhotoCompressionPreset: "hitplayer.defaultPhotoCompressionPreset",
   outputDirectory: "hitplayer.outputDirectory",
 };
+
+const PLAYBACK_AUDIO_CHANNEL = "hitplayer-playback-audio";
+const DEFAULT_PLAYBACK_AUDIO: PlaybackAudioState = { volume: 1, muted: false };
 
 const COMPRESSION_PRESETS: CompressionPreset[] = ["balanced", "small", "high_quality", "nvidia_fast"];
 const PHOTO_COMPRESSION_PRESETS: PhotoCompressionPreset[] = ["balanced", "small", "high_quality"];
@@ -98,6 +103,27 @@ function storedString(key: string): string | null {
   }
 }
 
+function normalizePlaybackAudio(value: Partial<PlaybackAudioState> | null | undefined): PlaybackAudioState {
+  const volume = Number(value?.volume);
+  return {
+    volume: Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : DEFAULT_PLAYBACK_AUDIO.volume,
+    muted: typeof value?.muted === "boolean" ? value.muted : DEFAULT_PLAYBACK_AUDIO.muted,
+  };
+}
+
+function storedPlaybackAudio(): PlaybackAudioState {
+  try {
+    const stored = window.localStorage.getItem(SETTINGS_KEYS.playbackAudio);
+    return stored ? normalizePlaybackAudio(JSON.parse(stored) as Partial<PlaybackAudioState>) : DEFAULT_PLAYBACK_AUDIO;
+  } catch {
+    return DEFAULT_PLAYBACK_AUDIO;
+  }
+}
+
+function samePlaybackAudio(left: PlaybackAudioState, right: PlaybackAudioState): boolean {
+  return Math.abs(left.volume - right.volume) < 0.001 && left.muted === right.muted;
+}
+
 function trimValidation(
   hasMedia: boolean,
   startSeconds: number,
@@ -134,6 +160,7 @@ export default function App() {
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const [previewSource, setPreviewSource] = useState<PreviewSource>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [playbackAudio, setPlaybackAudio] = useState<PlaybackAudioState>(() => storedPlaybackAudio());
   const [currentTime, setCurrentTime] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
@@ -145,6 +172,7 @@ export default function App() {
   const [result, setResult] = useState<JobResult | null>(null);
   const [detailsLog, setDetailsLog] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [isOpeningMedia, setIsOpeningMedia] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [theaterMode, setTheaterMode] = useState(() => storedBoolean(SETTINGS_KEYS.startInTheaterMode, false));
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -155,6 +183,14 @@ export default function App() {
     storedString(SETTINGS_KEYS.outputDirectory),
   );
   const [defaultPlayerStatus, setDefaultPlayerStatus] = useState<string | null>(null);
+  const playbackAudioChannel = useRef<BroadcastChannel | null>(null);
+  const activeOperationRef = useRef<number | null>(null);
+  const nextOperationIdRef = useRef(0);
+  const previewFallbackInFlightRef = useRef(false);
+  const busyRef = useRef(false);
+  const mediaLoadInProgressRef = useRef(false);
+  const currentTimeRef = useRef(0);
+  const lastRenderedTimeRef = useRef(0);
   const loadedLaunchPath = useRef(false);
   const loadRequestId = useRef(0);
 
@@ -170,6 +206,44 @@ export default function App() {
   );
 
   useEffect(() => {
+    const applyPlaybackAudio = (value: Partial<PlaybackAudioState> | null | undefined) => {
+      const normalized = normalizePlaybackAudio(value);
+      setPlaybackAudio((current) => (samePlaybackAudio(current, normalized) ? current : normalized));
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== SETTINGS_KEYS.playbackAudio) {
+        return;
+      }
+
+      if (!event.newValue) {
+        applyPlaybackAudio(DEFAULT_PLAYBACK_AUDIO);
+        return;
+      }
+
+      try {
+        applyPlaybackAudio(JSON.parse(event.newValue) as Partial<PlaybackAudioState>);
+      } catch {
+        applyPlaybackAudio(DEFAULT_PLAYBACK_AUDIO);
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+
+    if (typeof BroadcastChannel !== "undefined") {
+      const channel = new BroadcastChannel(PLAYBACK_AUDIO_CHANNEL);
+      channel.onmessage = (event: MessageEvent<Partial<PlaybackAudioState>>) => applyPlaybackAudio(event.data);
+      playbackAudioChannel.current = channel;
+    }
+
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      playbackAudioChannel.current?.close();
+      playbackAudioChannel.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     detectEncoders()
       .then(setEncoders)
       .catch((err) => {
@@ -180,15 +254,38 @@ export default function App() {
     let cleanup: (() => void) | undefined;
     listen<JobProgress>("ffmpeg-progress", (event) => {
       setProgress(event.payload);
-      if (["finished", "failed", "canceled"].includes(event.payload.phase)) {
-        setIsBusy(false);
-      }
     }).then((unlisten) => {
       cleanup = unlisten;
     });
 
     return () => cleanup?.();
   }, []);
+
+  useEffect(() => {
+    if (!encoders || encoders.hasLibwebp || photoFormat !== "webp") {
+      return;
+    }
+
+    setPhotoFormat("jpeg");
+    try {
+      window.localStorage.setItem(SETTINGS_KEYS.defaultPhotoCompressionFormat, "jpeg");
+    } catch {
+      // The active setting still falls back safely for this session.
+    }
+  }, [encoders, photoFormat]);
+
+  useEffect(() => {
+    if (!encoders || encoders.hasH264Nvenc || preset !== "nvidia_fast") {
+      return;
+    }
+
+    setPreset("balanced");
+    try {
+      window.localStorage.setItem(SETTINGS_KEYS.defaultCompressionPreset, "balanced");
+    } catch {
+      // The active setting still falls back safely for this session.
+    }
+  }, [encoders, preset]);
 
   useEffect(() => {
     if (loadedLaunchPath.current) {
@@ -207,22 +304,29 @@ export default function App() {
       });
   }, []);
 
-  async function preparePreviewForPath(path: string, requestId: number, forceTranscode: boolean) {
+  async function preparePreviewForPath(
+    path: string,
+    requestId: number,
+    forceTranscode: boolean,
+    imagePreview = false,
+  ) {
+    const operationId = beginOperation("Preparing Preview");
+    if (operationId == null) {
+      previewFallbackInFlightRef.current = false;
+      return;
+    }
+
     setPreviewFailed(false);
     setPreviewUrl(null);
     setPreviewState("preparing");
     setPreviewSource(null);
     setPreviewMessage(
-      forceTranscode
-        ? "HitPlayer is building a fully compatible local MP4 preview from the original file."
-        : "HitPlayer is preparing a local MP4 preview so this file can play here.",
+      imagePreview
+        ? "HitPlayer is preparing a compatible local image preview from the original file."
+        : forceTranscode
+          ? "HitPlayer is building a fully compatible local MP4 preview from the original file."
+          : "HitPlayer is preparing a local MP4 preview so this file can play here.",
     );
-    setIsBusy(true);
-    setJobName("Preparing Preview");
-    setProgress(null);
-    setResult(null);
-    setDetailsLog("");
-
     try {
       const preview = await preparePreview(path, forceTranscode);
       if (requestId !== loadRequestId.current) {
@@ -251,12 +355,19 @@ export default function App() {
       setError(String(err));
     } finally {
       if (requestId === loadRequestId.current) {
-        setIsBusy(false);
+        previewFallbackInFlightRef.current = false;
       }
+      finishOperation(operationId);
     }
   }
 
   async function loadVideo(path: string) {
+    if (mediaLoadInProgressRef.current) {
+      return;
+    }
+
+    mediaLoadInProgressRef.current = true;
+    setIsOpeningMedia(true);
     const requestId = loadRequestId.current + 1;
     loadRequestId.current = requestId;
 
@@ -267,6 +378,9 @@ export default function App() {
     setPreviewSource(null);
     setPreviewMessage(null);
     setPreviewFailed(false);
+    previewFallbackInFlightRef.current = false;
+    currentTimeRef.current = 0;
+    lastRenderedTimeRef.current = 0;
     setCurrentTime(0);
     setTrimStart(0);
     setTrimEnd(0);
@@ -283,18 +397,13 @@ export default function App() {
       setMetadata(info);
       setTrimEnd(info.durationSeconds ?? 0);
 
-      if (info.mediaKind === "image") {
-        setPreviewState("native");
-        setPreviewSource("native");
-        setPreviewMessage(null);
-        setPreviewUrl(toAssetUrl(path));
-      } else if (canTryPreview(path)) {
+      if (canTryPreview(path)) {
         setPreviewState("native");
         setPreviewSource("native");
         setPreviewMessage(null);
         setPreviewUrl(toAssetUrl(path));
       } else {
-        await preparePreviewForPath(path, requestId, false);
+        await preparePreviewForPath(path, requestId, false, info.mediaKind === "image");
       }
     } catch (err) {
       if (requestId === loadRequestId.current) {
@@ -306,10 +415,17 @@ export default function App() {
         setPreviewMessage("Could not read this media file. Check that the file or network drive is still available.");
       }
       throw err;
+    } finally {
+      mediaLoadInProgressRef.current = false;
+      setIsOpeningMedia(false);
     }
   }
 
   async function handleOpenVideo() {
+    if (busyRef.current || mediaLoadInProgressRef.current) {
+      return;
+    }
+
     try {
       setError(null);
       const path = await openVideoDialog();
@@ -324,14 +440,12 @@ export default function App() {
   }
 
   async function runJob(name: string, action: () => Promise<JobResult>) {
-    try {
-      setError(null);
-      setIsBusy(true);
-      setJobName(name);
-      setProgress(null);
-      setResult(null);
-      setDetailsLog("");
+    const operationId = beginOperation(name);
+    if (operationId == null) {
+      return;
+    }
 
+    try {
       const jobResult = await action();
       setResult(jobResult);
       setDetailsLog(jobResult.log);
@@ -341,7 +455,7 @@ export default function App() {
     } catch (err) {
       setError(String(err));
     } finally {
-      setIsBusy(false);
+      finishOperation(operationId);
     }
   }
 
@@ -354,6 +468,63 @@ export default function App() {
 
   function selectedOutputDirectory(): string | undefined {
     return outputDirectory?.trim() || undefined;
+  }
+
+  function beginOperation(name: string): number | null {
+    if (busyRef.current) {
+      return null;
+    }
+
+    const operationId = nextOperationIdRef.current + 1;
+    nextOperationIdRef.current = operationId;
+    activeOperationRef.current = operationId;
+    busyRef.current = true;
+    setError(null);
+    setIsBusy(true);
+    setJobName(name);
+    setProgress(null);
+    setResult(null);
+    setDetailsLog("");
+    return operationId;
+  }
+
+  function finishOperation(operationId: number) {
+    if (activeOperationRef.current !== operationId) {
+      return;
+    }
+
+    activeOperationRef.current = null;
+    busyRef.current = false;
+    setIsBusy(false);
+  }
+
+  function handlePlaybackAudioChange(nextAudio: PlaybackAudioState) {
+    const normalized = normalizePlaybackAudio(nextAudio);
+    if (samePlaybackAudio(playbackAudio, normalized)) {
+      return;
+    }
+
+    setPlaybackAudio(normalized);
+    try {
+      window.localStorage.setItem(SETTINGS_KEYS.playbackAudio, JSON.stringify(normalized));
+    } catch {
+      // The active media element still keeps the setting for this session.
+    }
+    playbackAudioChannel.current?.postMessage(normalized);
+  }
+
+  function handleTimeUpdate(seconds: number) {
+    if (!Number.isFinite(seconds)) {
+      return;
+    }
+
+    const clamped = Math.max(0, seconds);
+    currentTimeRef.current = clamped;
+    const lastRendered = lastRenderedTimeRef.current;
+    if (clamped < lastRendered || clamped - lastRendered >= 0.2) {
+      lastRenderedTimeRef.current = clamped;
+      setCurrentTime(clamped);
+    }
   }
 
   function handleFastTrim() {
@@ -402,6 +573,10 @@ export default function App() {
   }
 
   async function handleCancel() {
+    if (!busyRef.current) {
+      return;
+    }
+
     try {
       await cancelJob();
       setProgress((current) =>
@@ -409,7 +584,6 @@ export default function App() {
           ? { ...current, phase: "canceled", message: "Canceled." }
           : { jobId: "", phase: "canceled", percent: 0, message: "Canceled." },
       );
-      setIsBusy(false);
     } catch (err) {
       setError(String(err));
     }
@@ -418,14 +592,13 @@ export default function App() {
   function handlePreviewFailed() {
     setPreviewFailed(true);
 
-    if (hasImage) {
-      setPreviewState("failed");
-      setPreviewMessage("This image cannot be previewed here, but FFmpeg may still compress it.");
+    if (previewFallbackInFlightRef.current || busyRef.current) {
       return;
     }
 
     if (selectedPath && previewSource !== "transcode") {
-      void preparePreviewForPath(selectedPath, loadRequestId.current, true);
+      previewFallbackInFlightRef.current = true;
+      void preparePreviewForPath(selectedPath, loadRequestId.current, true, hasImage);
       return;
     }
 
@@ -519,23 +692,28 @@ export default function App() {
     setStartInTheaterMode(false);
     setTheaterMode(false);
     setOutputDirectory(null);
+    setPlaybackAudio(DEFAULT_PLAYBACK_AUDIO);
+    playbackAudioChannel.current?.postMessage(DEFAULT_PLAYBACK_AUDIO);
     try {
       window.localStorage.removeItem(SETTINGS_KEYS.startInTheaterMode);
       window.localStorage.removeItem(SETTINGS_KEYS.defaultCompressionPreset);
       window.localStorage.removeItem(SETTINGS_KEYS.defaultPhotoCompressionPreset);
       window.localStorage.removeItem(SETTINGS_KEYS.defaultPhotoCompressionFormat);
       window.localStorage.removeItem(SETTINGS_KEYS.outputDirectory);
+      window.localStorage.removeItem(SETTINGS_KEYS.playbackAudio);
     } catch {
       // Ignore storage failures.
     }
   }
 
+  const handleCloseSettings = useCallback(() => setSettingsOpen(false), []);
+
   return (
-    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-ink-950 text-slate-100">
+    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-ink-950 font-sans text-slate-100">
       <TopBar
         onOpenVideo={handleOpenVideo}
         onOpenSettings={() => setSettingsOpen(true)}
-        isBusy={isBusy}
+        isBusy={isBusy || isOpeningMedia}
         theaterMode={theaterMode}
         onToggleTheaterMode={() => setTheaterMode((enabled) => !enabled)}
       />
@@ -555,10 +733,12 @@ export default function App() {
           theaterMode={theaterMode}
           isAudioOnly={hasAudioOnly}
           isImage={hasImage}
+          playbackAudio={playbackAudio}
           width={metadata?.width ?? null}
           height={metadata?.height ?? null}
+          onPlaybackAudioChange={handlePlaybackAudioChange}
           onPreviewFailed={handlePreviewFailed}
-          onTimeUpdate={setCurrentTime}
+          onTimeUpdate={handleTimeUpdate}
         />
 
         <aside className={theaterMode ? "hidden" : "min-h-0 space-y-4 overflow-y-auto pr-1"}>
@@ -592,8 +772,8 @@ export default function App() {
                 startSeconds={trimStart}
                 endSeconds={trimEnd}
                 validationMessage={validationMessage}
-                onSetStart={() => setTrimStart(Math.max(0, currentTime))}
-                onSetEnd={() => setTrimEnd(Math.max(0, currentTime))}
+                onSetStart={() => setTrimStart(currentTimeRef.current)}
+                onSetEnd={() => setTrimEnd(currentTimeRef.current)}
                 onStartChange={setTrimStart}
                 onEndChange={setTrimEnd}
                 onFastTrim={handleFastTrim}
@@ -645,14 +825,18 @@ export default function App() {
         defaultPreset={preset}
         defaultPhotoPreset={photoPreset}
         defaultPhotoFormat={photoFormat}
+        hasWebp={!!encoders?.hasLibwebp}
+        hasNvenc={!!encoders?.hasH264Nvenc}
+        playbackAudio={playbackAudio}
         outputDirectory={outputDirectory}
         defaultPlayerStatus={defaultPlayerStatus}
         isBusy={isBusy}
-        onClose={() => setSettingsOpen(false)}
+        onClose={handleCloseSettings}
         onStartInTheaterModeChange={handleStartInTheaterModeChange}
         onDefaultPresetChange={handlePresetChange}
         onDefaultPhotoPresetChange={handlePhotoPresetChange}
         onDefaultPhotoFormatChange={handlePhotoFormatChange}
+        onPlaybackAudioChange={handlePlaybackAudioChange}
         onChooseOutputDirectory={handleChooseOutputDirectory}
         onClearOutputDirectory={handleClearOutputDirectory}
         onOpenDefaultPlayerSettings={handleSetDefaultPlayer}

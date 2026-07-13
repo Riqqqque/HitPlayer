@@ -1,4 +1,4 @@
-import { ChevronDown, FolderOpen, Loader2, Square, Wand2 } from "lucide-react";
+import { ChevronDown, FileSearch, FolderOpen, Loader2, Square, Wand2 } from "lucide-react";
 import { useState } from "react";
 import { revealOutputFile, openOutputFolder } from "../lib/api";
 import type { JobProgress, JobResult } from "../lib/types";
@@ -27,7 +27,7 @@ export function ProgressPanel({
   const isIndeterminate = percent < 0;
   const displayPercent = Math.max(0, Math.min(100, percent));
   const statusText = progress?.message ?? (result?.error || (result?.success ? "Finished." : "Ready."));
-  const outputPath = result?.outputPath;
+  const outputPath = result?.success ? result.outputPath : undefined;
 
   async function handleOpenFolder() {
     if (!outputPath) {
@@ -76,6 +76,7 @@ export function ProgressPanel({
             Open Folder
           </button>
           <button type="button" className="secondary-button" onClick={handleRevealFile} disabled={!outputPath}>
+            <FileSearch size={15} />
             Reveal File
           </button>
         </div>
@@ -93,10 +94,12 @@ export function ProgressPanel({
         </span>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
-        <span>Speed: {progress?.speed ?? "Unknown"}</span>
-        <span>FPS: {progress?.fps?.toFixed(1) ?? "Unknown"}</span>
-      </div>
+      {progress?.speed || progress?.fps != null ? (
+        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
+          {progress.speed ? <span>Speed: {progress.speed}</span> : null}
+          {progress.fps != null ? <span>FPS: {progress.fps.toFixed(1)}</span> : null}
+        </div>
+      ) : null}
 
       <button
         type="button"

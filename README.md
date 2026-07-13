@@ -23,6 +23,7 @@ The installer is current-user only, does not need admin rights, bundles FFmpeg/F
 - Previews common photos directly in the main preview area.
 - Prepares a local MP4 preview for MKV and other files WebView cannot play directly, including files opened from mapped or UNC network drives.
 - Prepares a local M4A preview for audio formats the built-in player cannot open directly.
+- Remembers volume and mute state across clips, app launches, and other open HitPlayer windows.
 - Still processes the original file with FFmpeg even when a local preview copy is needed.
 - Shows real metadata from FFprobe: duration, resolution, codecs, container, bitrate, and file size.
 - Sets start/end trim points from playback or manual timestamps.
@@ -77,7 +78,7 @@ npm run tauri:build
 The installer is written to:
 
 ```text
-src-tauri\target\release\bundle\nsis\HitPlayer_0.1.12_x64-setup.exe
+src-tauri\target\release\bundle\nsis\HitPlayer_0.1.14_x64-setup.exe
 ```
 
 GitHub keeps normal push checks quick. The main build workflow runs the frontend build and Rust tests only. Full Windows installer builds run from the separate **Installer** workflow when started manually or when a `v*` release tag is pushed.
@@ -196,7 +197,7 @@ identifier: com.rique.hitplayer
 Bump the version with:
 
 ```powershell
-npm run version:bump -- 0.1.2
+npm run version:bump -- 0.1.14
 ```
 
 Then build:
