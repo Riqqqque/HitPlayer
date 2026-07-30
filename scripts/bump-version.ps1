@@ -38,7 +38,7 @@ Update-FirstJsonVersion -Path (Join-Path $root 'src-tauri\tauri.conf.json') -Ver
 
 $cargoPath = Join-Path $root 'src-tauri\Cargo.toml'
 $cargo = Get-Content -LiteralPath $cargoPath -Raw
-$cargo = $cargo -replace '(?m)^version = ".*"$', "version = `"$Version`""
+$cargo = $cargo -replace '(?m)^version = ".*"\r?$', "version = `"$Version`""
 [System.IO.File]::WriteAllText($cargoPath, $cargo, $utf8NoBom)
 
 Write-Host "HitPlayer version set to $Version"

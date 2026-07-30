@@ -78,7 +78,7 @@ npm run tauri:build
 The installer is written to:
 
 ```text
-src-tauri\target\release\bundle\nsis\HitPlayer_0.1.14_x64-setup.exe
+src-tauri\target\release\bundle\nsis\HitPlayer_0.1.15_x64-setup.exe
 ```
 
 GitHub keeps normal push checks quick. The main build workflow runs the frontend build and Rust tests only. Full Windows installer builds run from the separate **Installer** workflow when started manually or when a `v*` release tag is pushed.
@@ -172,8 +172,10 @@ Formats:
 HitPlayer is tuned to stay out of the way while a game or stream is running:
 
 - FFmpeg jobs run at below-normal Windows process priority and never open a console window.
+- FFprobe and encoder checks also run below normal priority so opening media does not steal foreground CPU time.
 - CPU H.264 jobs use capped x264 worker threads so Windows has headroom for games, OBS, Discord, and browser tabs.
 - FFmpeg progress updates are limited to about once per second to avoid UI churn.
+- Native playback uses WebView2's hardware-accelerated media pipeline, buffers ahead, and keeps playback rendering isolated from trim-panel updates.
 - MKV and other non-browser previews try a cheap stream-copy MP4 preview first when the video/audio codecs are already compatible.
 - Full preview transcodes are capped to 1080p because the preview only needs to be playable, not archival quality.
 
@@ -197,7 +199,7 @@ identifier: com.rique.hitplayer
 Bump the version with:
 
 ```powershell
-npm run version:bump -- 0.1.14
+npm run version:bump -- 0.1.15
 ```
 
 Then build:

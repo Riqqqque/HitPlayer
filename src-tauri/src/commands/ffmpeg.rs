@@ -102,6 +102,9 @@ pub async fn fast_trim(
                 "copy".to_string(),
             ]);
         }
+        if supports_faststart(fast_extension) {
+            args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+        }
         args.extend(progress_args());
         args.push(path_arg(&output_path));
 
@@ -1004,6 +1007,13 @@ fn source_extension<'a>(input: &'a Path, fallback: &'a str) -> &'a str {
         .unwrap_or(fallback)
 }
 
+fn supports_faststart(extension: &str) -> bool {
+    matches!(
+        extension.to_ascii_lowercase().as_str(),
+        "mp4" | "m4v" | "mov" | "m4a"
+    )
+}
+
 fn progress_args() -> Vec<String> {
     vec![
         "-progress".to_string(),
@@ -1091,10 +1101,15 @@ fn command_no_window(program: std::path::PathBuf) -> Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
+        command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
     }
     command
 }
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(windows)]
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
 
 fn preview_cache_path(
     input: &Path,
@@ -1309,6 +1324,15 @@ mod tests {
         let args = preview_audio_args(Some("aac"));
 
         assert_eq!(args, vec!["-c:a".to_string(), "copy".to_string()]);
+    }
+
+    #[test]
+    fn faststart_is_only_used_for_iso_media_outputs() {
+        assert!(supports_faststart("mp4"));
+        assert!(supports_faststart("MOV"));
+        assert!(supports_faststart("m4a"));
+        assert!(!supports_faststart("mkv"));
+        assert!(!supports_faststart("mp3"));
     }
 
     #[test]

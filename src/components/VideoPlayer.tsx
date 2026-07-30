@@ -1,5 +1,5 @@
 import { AlertCircle, Film, Image as ImageIcon, LoaderCircle, Music } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useEffect, useRef } from "react";
 import { extensionFromPath, filenameFromPath, secondsToTimestamp } from "../lib/format";
 import type { PlaybackAudioState } from "../lib/types";
 
@@ -14,12 +14,9 @@ type VideoPlayerProps = {
   previewMessage: string | null;
   durationSeconds: number | null;
   previewFailed: boolean;
-  theaterMode: boolean;
   isAudioOnly: boolean;
   isImage: boolean;
   playbackAudio: PlaybackAudioState;
-  width: number | null;
-  height: number | null;
   onPlaybackAudioChange: (audio: PlaybackAudioState) => void;
   onPreviewFailed: () => void;
   onTimeUpdate: (seconds: number) => void;
@@ -38,66 +35,25 @@ export function canTryPreview(path: string | null): boolean {
   );
 }
 
-export function VideoPlayer({
+function VideoPlayerComponent({
   filePath,
   previewUrl,
   previewState,
   previewMessage,
   durationSeconds,
   previewFailed,
-  theaterMode,
   isAudioOnly,
   isImage,
   playbackAudio,
-  width,
-  height,
   onPlaybackAudioChange,
   onPreviewFailed,
   onTimeUpdate,
 }: VideoPlayerProps) {
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
-  const viewportRef = useRef<HTMLDivElement | null>(null);
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-  const [intrinsicSize, setIntrinsicSize] = useState<{ width: number; height: number } | null>(null);
   const canPreview = !!previewUrl && !previewFailed;
   const HeaderIcon = isImage ? ImageIcon : isAudioOnly ? Music : Film;
 
-  const aspectRatio = useMemo(() => {
-    const mediaWidth = intrinsicSize?.width ?? (width && width > 0 ? width : undefined);
-    const mediaHeight = intrinsicSize?.height ?? (height && height > 0 ? height : undefined);
-
-    if (mediaWidth && mediaHeight && mediaWidth > 0 && mediaHeight > 0) {
-      return mediaWidth / mediaHeight;
-    }
-
-    return 16 / 9;
-  }, [height, intrinsicSize, width]);
-
-  const fittedFrameStyle = useMemo<CSSProperties>(() => {
-    const maxWidth = viewportSize.width;
-    const maxHeight = viewportSize.height;
-
-    if (!maxWidth || !maxHeight) {
-      return { height: "100%", width: "100%" };
-    }
-
-    let frameWidth = maxWidth;
-    let frameHeight = frameWidth / aspectRatio;
-
-    if (frameHeight > maxHeight) {
-      frameHeight = maxHeight;
-      frameWidth = frameHeight * aspectRatio;
-    }
-
-    return {
-      height: `${Math.max(1, frameHeight)}px`,
-      width: `${Math.max(1, frameWidth)}px`,
-    };
-  }, [aspectRatio, viewportSize.height, viewportSize.width]);
-
   useEffect(() => {
-    setIntrinsicSize(null);
-
     if (isImage || !mediaRef.current || !previewUrl) {
       return;
     }
@@ -123,40 +79,6 @@ export function VideoPlayer({
     onPlaybackAudioChange({ volume: media.volume, muted: media.muted });
   }
 
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) {
-      return;
-    }
-
-    const updateSize = () => {
-      const rect = viewport.getBoundingClientRect();
-      const nextSize = {
-        height: Math.max(0, rect.height),
-        width: Math.max(0, rect.width),
-      };
-
-      setViewportSize((currentSize) =>
-        Math.abs(currentSize.width - nextSize.width) < 0.5 &&
-        Math.abs(currentSize.height - nextSize.height) < 0.5
-          ? currentSize
-          : nextSize,
-      );
-    };
-
-    updateSize();
-
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", updateSize);
-      return () => window.removeEventListener("resize", updateSize);
-    }
-
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(viewport);
-
-    return () => observer.disconnect();
-  }, [canPreview, isAudioOnly, isImage, theaterMode]);
-
   return (
     <section className="flex h-full min-h-0 flex-col rounded-lg border border-white/10 bg-black shadow-panel">
       <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
@@ -170,28 +92,13 @@ export function VideoPlayer({
       <div className="relative min-h-0 flex-1 overflow-hidden rounded-b-lg bg-black">
         {canPreview ? (
           isImage ? (
-            <div
-              ref={viewportRef}
-              className={
-                theaterMode
-                  ? "absolute inset-x-4 bottom-10 top-4 flex items-center justify-center overflow-hidden"
-                  : "absolute inset-0 flex items-center justify-center overflow-hidden"
-              }
-            >
-              <div className="flex max-h-full max-w-full items-center justify-center" style={fittedFrameStyle}>
-                <img
-                  src={previewUrl}
-                  alt={filenameFromPath(filePath)}
-                  className="block h-full w-full rounded-md bg-black object-contain"
-                  onError={onPreviewFailed}
-                  onLoad={(event) => {
-                    const image = event.currentTarget;
-                    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
-                      setIntrinsicSize({ width: image.naturalWidth, height: image.naturalHeight });
-                    }
-                  }}
-                />
-              </div>
+            <div className="absolute inset-0 flex min-h-0 items-center justify-center overflow-hidden bg-black">
+              <img
+                src={previewUrl}
+                alt={filenameFromPath(filePath)}
+                className="block h-full w-full bg-black object-contain"
+                onError={onPreviewFailed}
+              />
             </div>
           ) : isAudioOnly ? (
             <div className="absolute inset-0 grid place-items-center overflow-hidden px-6">
@@ -211,7 +118,7 @@ export function VideoPlayer({
                   }}
                   className="hit-audio-preview w-full"
                   controls
-                  preload="metadata"
+                  preload="auto"
                   onError={onPreviewFailed}
                   onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
                   onVolumeChange={(event) => handleVolumeChange(event.currentTarget)}
@@ -221,35 +128,21 @@ export function VideoPlayer({
               </div>
             </div>
           ) : (
-            <div
-              ref={viewportRef}
-              className={
-                theaterMode
-                  ? "absolute inset-x-4 bottom-10 top-4 flex items-center justify-center overflow-hidden"
-                  : "absolute inset-0 flex items-center justify-center overflow-hidden"
-              }
-            >
-              <div className="flex max-h-full max-w-full items-center justify-center" style={fittedFrameStyle}>
-                <video
-                  ref={(node) => {
-                    mediaRef.current = node;
-                  }}
-                  className="hit-video-preview block h-full w-full rounded-md bg-black object-contain"
-                  controls
-                  preload="metadata"
-                  onError={onPreviewFailed}
-                  onLoadedMetadata={(event) => {
-                    const video = event.currentTarget;
-                    if (video.videoWidth > 0 && video.videoHeight > 0) {
-                      setIntrinsicSize({ width: video.videoWidth, height: video.videoHeight });
-                    }
-                  }}
-                  onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
-                  onVolumeChange={(event) => handleVolumeChange(event.currentTarget)}
-                >
-                  <source src={previewUrl ?? undefined} />
-                </video>
-              </div>
+            <div className="absolute inset-0 flex min-h-0 items-center justify-center overflow-hidden bg-black">
+              <video
+                ref={(node) => {
+                  mediaRef.current = node;
+                }}
+                className="hit-video-preview block h-full w-full bg-black object-contain"
+                controls
+                playsInline
+                preload="auto"
+                onError={onPreviewFailed}
+                onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
+                onVolumeChange={(event) => handleVolumeChange(event.currentTarget)}
+              >
+                <source src={previewUrl ?? undefined} />
+              </video>
             </div>
           )
         ) : (
@@ -284,3 +177,18 @@ export function VideoPlayer({
     </section>
   );
 }
+
+export const VideoPlayer = memo(
+  VideoPlayerComponent,
+  (previous, next) =>
+    previous.filePath === next.filePath &&
+    previous.previewUrl === next.previewUrl &&
+    previous.previewState === next.previewState &&
+    previous.previewMessage === next.previewMessage &&
+    previous.durationSeconds === next.durationSeconds &&
+    previous.previewFailed === next.previewFailed &&
+    previous.isAudioOnly === next.isAudioOnly &&
+    previous.isImage === next.isImage &&
+    previous.playbackAudio.volume === next.playbackAudio.volume &&
+    previous.playbackAudio.muted === next.playbackAudio.muted,
+);
