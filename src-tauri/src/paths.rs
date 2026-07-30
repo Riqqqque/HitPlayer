@@ -156,6 +156,15 @@ fn reserve_unique_output_path(path: PathBuf) -> Result<PathBuf, String> {
     Ok(candidate)
 }
 
+fn is_same_path(left: &Path, right: &Path) -> bool {
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,14 +276,5 @@ mod tests {
         assert!(second.is_file());
 
         let _ = std::fs::remove_dir_all(root);
-    }
-}
-
-fn is_same_path(left: &Path, right: &Path) -> bool {
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => left
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&right.to_string_lossy()),
     }
 }

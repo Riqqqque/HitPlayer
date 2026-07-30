@@ -153,10 +153,15 @@ fn command_no_window(program: PathBuf) -> Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
+        command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
     }
     command
 }
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(windows)]
+const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x00004000;
 
 fn output_with_timeout(mut command: Command, timeout: Duration) -> Result<Output, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());

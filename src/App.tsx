@@ -521,7 +521,7 @@ export default function App() {
     const clamped = Math.max(0, seconds);
     currentTimeRef.current = clamped;
     const lastRendered = lastRenderedTimeRef.current;
-    if (clamped < lastRendered || clamped - lastRendered >= 0.2) {
+    if (clamped < lastRendered || clamped - lastRendered >= 0.5) {
       lastRenderedTimeRef.current = clamped;
       setCurrentTime(clamped);
     }
@@ -730,12 +730,9 @@ export default function App() {
           previewMessage={previewMessage}
           durationSeconds={durationSeconds}
           previewFailed={previewFailed}
-          theaterMode={theaterMode}
           isAudioOnly={hasAudioOnly}
           isImage={hasImage}
           playbackAudio={playbackAudio}
-          width={metadata?.width ?? null}
-          height={metadata?.height ?? null}
           onPlaybackAudioChange={handlePlaybackAudioChange}
           onPreviewFailed={handlePreviewFailed}
           onTimeUpdate={handleTimeUpdate}
