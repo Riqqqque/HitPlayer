@@ -28,14 +28,16 @@ pub fn probe_video_internal(app: &AppHandle, input: &Path) -> Result<VideoMetada
 
     let ffprobe = binary_path(app, "ffprobe")?;
     let mut command = command_no_window(ffprobe);
+    command.args(["-v", "error"]);
+    if is_avi_like_path(input) {
+        command.args(["-probesize", "20000000", "-analyzeduration", "20000000"]);
+    }
     command
         .args([
-            "-v",
-            "error",
             "-print_format",
             "json",
             "-show_entries",
-            "format=format_name,duration,bit_rate:stream=index,codec_type,codec_name,width,height,channels,sample_rate,duration:stream_disposition=attached_pic",
+            "format=format_name,duration,bit_rate:stream=index,codec_type,codec_name,width,height,channels,sample_rate,duration,pix_fmt,profile,field_order,sample_aspect_ratio,avg_frame_rate,r_frame_rate,nb_frames:stream_disposition=attached_pic",
         ])
         .arg(input);
     let output = output_with_timeout(command, FFPROBE_TIMEOUT)?;
@@ -86,12 +88,12 @@ fn metadata_from_response(
         _ => MediaKind::Unknown,
     });
 
+    let format = response.format.as_ref();
+    let bitrate = format.and_then(|format| parse_optional_u64(format.bit_rate.as_deref()));
     let duration_seconds = if media_kind == MediaKind::Image {
         None
     } else {
-        response
-            .format
-            .as_ref()
+        format
             .and_then(|format| parse_optional_f64(format.duration.as_deref()))
             .or_else(|| {
                 visual_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref()))
@@ -99,9 +101,10 @@ fn metadata_from_response(
             .or_else(|| {
                 audio_stream.and_then(|stream| parse_optional_f64(stream.duration.as_deref()))
             })
+            .or_else(|| duration_from_frames(visual_stream.or(audio_stream)))
+            .or_else(|| duration_from_bitrate(file_size_bytes, bitrate))
     };
 
-    let format = response.format.as_ref();
     let is_image = media_kind == MediaKind::Image;
 
     VideoMetadata {
@@ -125,9 +128,29 @@ fn metadata_from_response(
             None
         },
         container: format.and_then(|format| format.format_name.clone()),
-        bitrate: format.and_then(|format| parse_optional_u64(format.bit_rate.as_deref())),
+        bitrate,
         file_size_bytes,
         streams,
+        pix_fmt: if is_image {
+            None
+        } else {
+            visual_stream.and_then(|stream| stream.pix_fmt.clone())
+        },
+        video_profile: if is_image {
+            None
+        } else {
+            visual_stream.and_then(|stream| stream.profile.clone())
+        },
+        field_order: if is_image {
+            None
+        } else {
+            visual_stream.and_then(|stream| stream.field_order.clone())
+        },
+        sample_aspect_ratio: if is_image {
+            None
+        } else {
+            visual_stream.and_then(|stream| stream.sample_aspect_ratio.clone())
+        },
     }
 }
 
@@ -135,6 +158,61 @@ fn parse_optional_f64(value: Option<&str>) -> Option<f64> {
     value
         .and_then(|value| value.parse::<f64>().ok())
         .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn parse_frame_rate(value: Option<&str>) -> Option<f64> {
+    let value = value?.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("n/a") {
+        return None;
+    }
+
+    if let Some((numerator, denominator)) = value.split_once('/') {
+        let numerator = numerator.parse::<f64>().ok()?;
+        let denominator = denominator.parse::<f64>().ok()?;
+        if numerator <= 0.0 || denominator <= 0.0 {
+            return None;
+        }
+        let fps = numerator / denominator;
+        return fps.is_finite().then_some(fps).filter(|fps| *fps > 0.0);
+    }
+
+    parse_optional_f64(Some(value))
+}
+
+fn duration_from_frames(stream: Option<&FfprobeStream>) -> Option<f64> {
+    let stream = stream?;
+    let frames = parse_optional_f64(stream.nb_frames.as_deref())?;
+    let fps = parse_frame_rate(stream.avg_frame_rate.as_deref())
+        .or_else(|| parse_frame_rate(stream.r_frame_rate.as_deref()))?;
+    let duration = frames / fps;
+    duration
+        .is_finite()
+        .then_some(duration)
+        .filter(|duration| *duration > 0.0)
+}
+
+fn duration_from_bitrate(file_size_bytes: u64, bitrate: Option<u64>) -> Option<f64> {
+    let bitrate = bitrate?;
+    if file_size_bytes == 0 || bitrate == 0 {
+        return None;
+    }
+
+    let duration = (file_size_bytes as f64 * 8.0) / bitrate as f64;
+    duration
+        .is_finite()
+        .then_some(duration)
+        .filter(|duration| *duration > 0.05)
+}
+
+pub(crate) fn is_avi_like_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "avi" | "divx" | "xvid"
+            )
+        })
 }
 
 fn parse_optional_u64(value: Option<&str>) -> Option<u64> {
@@ -244,7 +322,7 @@ struct FfprobeResponse {
     format: Option<FfprobeFormat>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct FfprobeStream {
     index: Option<u32>,
     codec_type: Option<String>,
@@ -254,6 +332,13 @@ struct FfprobeStream {
     channels: Option<u32>,
     sample_rate: Option<String>,
     duration: Option<String>,
+    pix_fmt: Option<String>,
+    profile: Option<String>,
+    field_order: Option<String>,
+    sample_aspect_ratio: Option<String>,
+    avg_frame_rate: Option<String>,
+    r_frame_rate: Option<String>,
+    nb_frames: Option<String>,
     disposition: Option<FfprobeDisposition>,
 }
 
@@ -282,18 +367,17 @@ struct FfprobeFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn audio_stream(duration: Option<&str>) -> FfprobeStream {
         FfprobeStream {
             index: Some(0),
             codec_type: Some("audio".to_string()),
             codec_name: Some("mp3".to_string()),
-            width: None,
-            height: None,
             channels: Some(2),
             sample_rate: Some("48000".to_string()),
             duration: duration.map(str::to_string),
-            disposition: None,
+            ..Default::default()
         }
     }
 
@@ -304,12 +388,10 @@ mod tests {
             codec_name: Some("mjpeg".to_string()),
             width: Some(800),
             height: Some(800),
-            channels: None,
-            sample_rate: None,
-            duration: None,
             disposition: Some(FfprobeDisposition {
                 attached_pic: Some(1),
             }),
+            ..Default::default()
         }
     }
 
@@ -363,10 +445,8 @@ mod tests {
                     codec_name: Some("png".to_string()),
                     width: Some(1280),
                     height: Some(720),
-                    channels: None,
-                    sample_rate: None,
                     duration: Some("0.04".to_string()),
-                    disposition: None,
+                    ..Default::default()
                 }],
                 format: Some(FfprobeFormat {
                     format_name: Some("png_pipe".to_string()),
@@ -392,5 +472,68 @@ mod tests {
         assert_eq!(parse_optional_f64(Some("NaN")), None);
         assert_eq!(parse_optional_u64(Some("0")), None);
         assert_eq!(positive_u32(Some(0)), None);
+    }
+
+    #[test]
+    fn avi_duration_falls_back_to_frame_count() {
+        let metadata = metadata_from_response(
+            FfprobeResponse {
+                streams: vec![FfprobeStream {
+                    index: Some(0),
+                    codec_type: Some("video".to_string()),
+                    codec_name: Some("mpeg4".to_string()),
+                    width: Some(720),
+                    height: Some(480),
+                    pix_fmt: Some("yuv420p".to_string()),
+                    avg_frame_rate: Some("30000/1001".to_string()),
+                    nb_frames: Some("3000".to_string()),
+                    ..Default::default()
+                }],
+                format: Some(FfprobeFormat {
+                    format_name: Some("avi".to_string()),
+                    duration: None,
+                    bit_rate: Some("1500000".to_string()),
+                }),
+            },
+            20 * 1024 * 1024,
+            None,
+        );
+
+        let duration = metadata.duration_seconds.expect("duration");
+        assert!((duration - 100.1).abs() < 0.1);
+        assert_eq!(metadata.pix_fmt.as_deref(), Some("yuv420p"));
+        assert_eq!(metadata.container.as_deref(), Some("avi"));
+    }
+
+    #[test]
+    fn missing_duration_can_use_bitrate_and_file_size() {
+        let metadata = metadata_from_response(
+            FfprobeResponse {
+                streams: vec![FfprobeStream {
+                    index: Some(0),
+                    codec_type: Some("video".to_string()),
+                    codec_name: Some("mpeg4".to_string()),
+                    width: Some(640),
+                    height: Some(480),
+                    ..Default::default()
+                }],
+                format: Some(FfprobeFormat {
+                    format_name: Some("avi".to_string()),
+                    duration: None,
+                    bit_rate: Some("1000000".to_string()),
+                }),
+            },
+            12_500_000,
+            None,
+        );
+
+        assert_eq!(metadata.duration_seconds, Some(100.0));
+    }
+
+    #[test]
+    fn avi_extensions_use_a_deeper_probe() {
+        assert!(is_avi_like_path(Path::new(r"C:\Videos\clip.AVI")));
+        assert!(is_avi_like_path(Path::new("movie.divx")));
+        assert!(!is_avi_like_path(Path::new("clip.mp4")));
     }
 }

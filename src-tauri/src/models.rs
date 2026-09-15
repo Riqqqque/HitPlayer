@@ -26,6 +26,14 @@ pub struct VideoMetadata {
     pub bitrate: Option<u64>,
     pub file_size_bytes: u64,
     pub streams: Vec<StreamInfo>,
+    #[serde(skip_serializing)]
+    pub pix_fmt: Option<String>,
+    #[serde(skip_serializing)]
+    pub video_profile: Option<String>,
+    #[serde(skip_serializing)]
+    pub field_order: Option<String>,
+    #[serde(skip_serializing)]
+    pub sample_aspect_ratio: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

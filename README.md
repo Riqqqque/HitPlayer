@@ -90,11 +90,11 @@ HitPlayer always uses bundled/local binaries. It does not call `ffmpeg` or `ffpr
 Development binaries belong here:
 
 ```text
-src-tauri\binaries\ffmpeg.exe
-src-tauri\binaries\ffprobe.exe
 src-tauri\binaries\ffmpeg-x86_64-pc-windows-msvc.exe
 src-tauri\binaries\ffprobe-x86_64-pc-windows-msvc.exe
 ```
+
+Tauri installs these as `ffmpeg.exe` and `ffprobe.exe` beside HitPlayer. Keeping only the target-triple source files avoids storing a redundant 193 MB copy in the repository.
 
 Run this to download and place them:
 

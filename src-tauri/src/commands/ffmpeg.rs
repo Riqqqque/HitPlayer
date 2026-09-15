@@ -1,4 +1,4 @@
-use crate::commands::ffprobe::probe_video_internal;
+use crate::commands::ffprobe::{is_avi_like_path, probe_video_internal};
 use crate::commands::jobs::{path_arg, run_ffmpeg_job, FfmpegJob, JobManager};
 use crate::models::{
     CompressOptions, CompressionPreset, ConvertOptions, EncoderSupport, JobResult, MediaKind,
@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, State};
 
 const PREVIEW_CACHE_DAYS: u64 = 7;
-const PREVIEW_CACHE_VERSION: u8 = 2;
+const PREVIEW_CACHE_VERSION: u8 = 3;
 const MIN_USEFUL_COMPRESSION_BITRATE_BPS: u64 = 96_000;
 
 #[tauri::command]
@@ -486,124 +486,140 @@ fn prepare_preview_internal(
     let can_copy_video = !is_image
         && !audio_only
         && !force_transcode
-        && metadata
-            .video_codec
-            .as_deref()
-            .is_some_and(|codec| codec.eq_ignore_ascii_case("h264"));
-    let method = if is_image {
-        "image_preview"
-    } else if audio_only {
-        "audio_preview"
-    } else if can_copy_video {
-        "stream_copy"
-    } else {
-        "transcode"
-    };
-    let preview_extension = if is_image {
-        "png"
-    } else if audio_only {
-        "m4a"
-    } else {
-        "mp4"
-    };
-    let output_path = preview_cache_path(input, method, preview_extension)?;
+        && can_stream_copy_preview_video(&metadata);
 
-    cleanup_preview_cache(output_path.parent().unwrap_or_else(|| Path::new("")));
+    cleanup_preview_cache(
+        preview_cache_path(input, "transcode", "mp4")?
+            .parent()
+            .unwrap_or_else(|| Path::new("")),
+    );
 
-    if output_path.is_file()
-        && output_path
-            .metadata()
-            .map(|metadata| metadata.len() > 0)
-            .unwrap_or(false)
-    {
-        return Ok(PreviewResult {
-            preview_path: output_path.to_string_lossy().to_string(),
-            used_cached_file: true,
-            method: method.to_string(),
-            log: String::new(),
-        });
+    if is_image || audio_only {
+        let method = if is_image {
+            PreviewMethod::Image
+        } else {
+            PreviewMethod::Audio
+        };
+        let output_path = preview_cache_path(input, method.as_str(), method.extension())?;
+        if let Some(cached) = cached_preview(&output_path, method.as_str()) {
+            return Ok(cached);
+        }
+        return encode_preview(app, manager, input, &output_path, &metadata, method);
     }
 
-    let _ = fs::remove_file(&output_path);
+    let remux_path = preview_cache_path(input, PreviewMethod::StreamCopy.as_str(), "mp4")?;
+    let transcode_path = preview_cache_path(input, PreviewMethod::Transcode.as_str(), "mp4")?;
+    let remux_ready = output_file_ready(&remux_path);
+    let transcode_ready = output_file_ready(&transcode_path);
+
+    if force_transcode {
+        if let Some(cached) = cached_preview(&transcode_path, PreviewMethod::Transcode.as_str()) {
+            return Ok(cached);
+        }
+        return encode_preview(
+            app,
+            manager,
+            input,
+            &transcode_path,
+            &metadata,
+            PreviewMethod::Transcode,
+        );
+    }
+
+    if transcode_ready && remux_ready {
+        if let Some(cached) = cached_preview(&transcode_path, PreviewMethod::Transcode.as_str()) {
+            return Ok(cached);
+        }
+    }
+    if remux_ready {
+        if let Some(cached) = cached_preview(&remux_path, PreviewMethod::StreamCopy.as_str()) {
+            return Ok(cached);
+        }
+    }
+    if transcode_ready {
+        if let Some(cached) = cached_preview(&transcode_path, PreviewMethod::Transcode.as_str()) {
+            return Ok(cached);
+        }
+    }
+
+    if can_copy_video {
+        match encode_preview(
+            app,
+            manager.clone(),
+            input,
+            &remux_path,
+            &metadata,
+            PreviewMethod::StreamCopy,
+        ) {
+            Ok(result) => return Ok(result),
+            Err(error) if error == "Preview preparation was canceled." => return Err(error),
+            Err(_) => {}
+        }
+    }
+
+    encode_preview(
+        app,
+        manager,
+        input,
+        &transcode_path,
+        &metadata,
+        PreviewMethod::Transcode,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum PreviewMethod {
+    Image,
+    Audio,
+    StreamCopy,
+    Transcode,
+}
+
+impl PreviewMethod {
+    fn as_str(self) -> &'static str {
+        match self {
+            PreviewMethod::Image => "image_preview",
+            PreviewMethod::Audio => "audio_preview",
+            PreviewMethod::StreamCopy => "stream_copy",
+            PreviewMethod::Transcode => "transcode",
+        }
+    }
+
+    fn extension(self) -> &'static str {
+        match self {
+            PreviewMethod::Image => "png",
+            PreviewMethod::Audio => "m4a",
+            PreviewMethod::StreamCopy | PreviewMethod::Transcode => "mp4",
+        }
+    }
+}
+
+fn cached_preview(output_path: &Path, method: &str) -> Option<PreviewResult> {
+    output_file_ready(output_path).then(|| PreviewResult {
+        preview_path: output_path.to_string_lossy().to_string(),
+        used_cached_file: true,
+        method: method.to_string(),
+        log: String::new(),
+    })
+}
+
+fn encode_preview(
+    app: &AppHandle,
+    manager: JobManager,
+    input: &Path,
+    output_path: &Path,
+    metadata: &VideoMetadata,
+    method: PreviewMethod,
+) -> Result<PreviewResult, String> {
+    let _ = fs::remove_file(output_path);
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create preview cache: {error}"))?;
     }
-    let work_path = preview_work_path(&output_path)?;
+    let work_path = preview_work_path(output_path)?;
     let _ = fs::remove_file(&work_path);
 
-    let mut args = vec!["-y".to_string(), "-i".to_string(), path_arg(input)];
-
-    if is_image {
-        args.extend([
-            "-map".to_string(),
-            "0:v:0".to_string(),
-            "-frames:v".to_string(),
-            "1".to_string(),
-        ]);
-        args.extend(preview_scale_args(&metadata));
-        args.extend([
-            "-c:v".to_string(),
-            "png".to_string(),
-            "-update".to_string(),
-            "1".to_string(),
-        ]);
-    } else if audio_only {
-        args.extend([
-            "-map".to_string(),
-            "0:a:0".to_string(),
-            "-vn".to_string(),
-            "-sn".to_string(),
-            "-dn".to_string(),
-            "-c:a".to_string(),
-            "aac".to_string(),
-            "-b:a".to_string(),
-            "128k".to_string(),
-        ]);
-    } else if can_copy_video {
-        args.extend([
-            "-map".to_string(),
-            "0:v:0".to_string(),
-            "-map".to_string(),
-            "0:a?".to_string(),
-            "-sn".to_string(),
-            "-dn".to_string(),
-            "-c:v".to_string(),
-            "copy".to_string(),
-        ]);
-        args.extend(preview_audio_args(metadata.audio_codec.as_deref()));
-    } else {
-        args.extend([
-            "-map".to_string(),
-            "0:v:0".to_string(),
-            "-map".to_string(),
-            "0:a?".to_string(),
-            "-sn".to_string(),
-            "-dn".to_string(),
-        ]);
-        args.extend(preview_scale_args(&metadata));
-        args.extend([
-            "-c:v".to_string(),
-            "libx264".to_string(),
-            "-preset".to_string(),
-            "veryfast".to_string(),
-        ]);
-        args.extend(low_impact_thread_args());
-        args.extend([
-            "-crf".to_string(),
-            "23".to_string(),
-            "-pix_fmt".to_string(),
-            "yuv420p".to_string(),
-            "-c:a".to_string(),
-            "aac".to_string(),
-            "-b:a".to_string(),
-            "128k".to_string(),
-        ]);
-    }
-
-    if !is_image {
-        args.extend(["-movflags".to_string(), "+faststart".to_string()]);
-    }
+    let mut args = preview_args(input, metadata, method);
     args.extend(progress_args());
     args.push(path_arg(&work_path));
 
@@ -614,7 +630,7 @@ fn prepare_preview_internal(
             name: "Preparing Preview".to_string(),
             args,
             output_path: work_path.clone(),
-            total_duration: if is_image {
+            total_duration: if matches!(method, PreviewMethod::Image) {
                 Some(1.0)
             } else {
                 metadata.duration_seconds
@@ -633,14 +649,123 @@ fn prepare_preview_internal(
         );
     }
 
-    publish_preview(&work_path, &output_path)?;
+    publish_preview(&work_path, output_path)?;
 
     Ok(PreviewResult {
         preview_path: output_path.to_string_lossy().to_string(),
         used_cached_file: false,
-        method: method.to_string(),
+        method: method.as_str().to_string(),
         log: result.log,
     })
+}
+
+fn preview_args(input: &Path, metadata: &VideoMetadata, method: PreviewMethod) -> Vec<String> {
+    let mut args = preview_input_args(input, metadata);
+
+    match method {
+        PreviewMethod::Image => {
+            args.extend([
+                "-map".to_string(),
+                "0:v:0".to_string(),
+                "-frames:v".to_string(),
+                "1".to_string(),
+            ]);
+            args.extend(preview_scale_args(metadata));
+            args.extend([
+                "-c:v".to_string(),
+                "png".to_string(),
+                "-update".to_string(),
+                "1".to_string(),
+            ]);
+        }
+        PreviewMethod::Audio => {
+            args.extend([
+                "-map".to_string(),
+                "0:a:0".to_string(),
+                "-vn".to_string(),
+                "-sn".to_string(),
+                "-dn".to_string(),
+            ]);
+            args.extend(preview_transcode_audio_args());
+            args.extend(["-movflags".to_string(), "+faststart".to_string()]);
+        }
+        PreviewMethod::StreamCopy => {
+            args.extend([
+                "-map".to_string(),
+                "0:v:0".to_string(),
+                "-map".to_string(),
+                "0:a?".to_string(),
+                "-sn".to_string(),
+                "-dn".to_string(),
+                "-c:v".to_string(),
+                "copy".to_string(),
+            ]);
+            args.extend(preview_audio_args(metadata.audio_codec.as_deref()));
+            args.extend([
+                "-avoid_negative_ts".to_string(),
+                "make_zero".to_string(),
+                "-movflags".to_string(),
+                "+faststart".to_string(),
+            ]);
+        }
+        PreviewMethod::Transcode => {
+            args.extend([
+                "-map".to_string(),
+                "0:v:0".to_string(),
+                "-map".to_string(),
+                "0:a?".to_string(),
+                "-sn".to_string(),
+                "-dn".to_string(),
+            ]);
+            args.extend(preview_filter_args(metadata));
+            args.extend([
+                "-c:v".to_string(),
+                "libx264".to_string(),
+                "-preset".to_string(),
+                "ultrafast".to_string(),
+            ]);
+            args.extend(low_impact_thread_args());
+            args.extend([
+                "-crf".to_string(),
+                "23".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-g".to_string(),
+                "48".to_string(),
+                "-keyint_min".to_string(),
+                "48".to_string(),
+                "-fps_mode".to_string(),
+                "cfr".to_string(),
+            ]);
+            args.extend(preview_transcode_audio_args());
+            args.extend([
+                "-avoid_negative_ts".to_string(),
+                "make_zero".to_string(),
+                "-movflags".to_string(),
+                "+faststart".to_string(),
+            ]);
+        }
+    }
+
+    args
+}
+
+fn preview_input_args(input: &Path, metadata: &VideoMetadata) -> Vec<String> {
+    let mut args = vec!["-y".to_string()];
+    if is_avi_like(input, metadata.container.as_deref()) {
+        args.extend([
+            "-probesize".to_string(),
+            "20000000".to_string(),
+            "-analyzeduration".to_string(),
+            "20000000".to_string(),
+            "-fflags".to_string(),
+            "+genpts+igndts".to_string(),
+        ]);
+    } else {
+        args.extend(["-fflags".to_string(), "+genpts".to_string()]);
+    }
+    args.extend(["-i".to_string(), path_arg(input)]);
+    args
 }
 
 struct ValidatedTrim {
@@ -1049,6 +1174,75 @@ fn preview_scale_args(metadata: &VideoMetadata) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn preview_filter_args(metadata: &VideoMetadata) -> Vec<String> {
+    let mut filters = Vec::new();
+    if is_interlaced(metadata.field_order.as_deref()) {
+        filters.push("yadif=0:-1:0".to_string());
+    }
+    if let Some((width, height)) = preview_output_dimensions(metadata) {
+        filters.push(format!("scale={width}:{height}"));
+        filters.push("setsar=1".to_string());
+    }
+
+    if filters.is_empty() {
+        Vec::new()
+    } else {
+        vec!["-vf".to_string(), filters.join(",")]
+    }
+}
+
+fn preview_output_dimensions(metadata: &VideoMetadata) -> Option<(u32, u32)> {
+    let width = metadata.width?;
+    let height = metadata.height?;
+    let (square_width, square_height) =
+        square_pixel_dimensions(width, height, metadata.sample_aspect_ratio.as_deref());
+    if let Some(scaled) = preview_scaled_dimensions(Some(square_width), Some(square_height)) {
+        return Some(scaled);
+    }
+    if square_width != width || square_height != height {
+        return Some((even_dimension(square_width), even_dimension(square_height)));
+    }
+    None
+}
+
+fn square_pixel_dimensions(width: u32, height: u32, sample_aspect_ratio: Option<&str>) -> (u32, u32) {
+    let Some((numerator, denominator)) = parse_ratio(sample_aspect_ratio) else {
+        return (width, height);
+    };
+    if numerator == 0 || denominator == 0 || numerator == denominator {
+        return (width, height);
+    }
+
+    let display_width =
+        ((f64::from(width) * f64::from(numerator) / f64::from(denominator)).round() as u32).max(2);
+    (display_width, height.max(2))
+}
+
+fn parse_ratio(value: Option<&str>) -> Option<(u32, u32)> {
+    let value = value?.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("n/a") {
+        return None;
+    }
+    let (numerator, denominator) = value.split_once(':')?;
+    let numerator = numerator.parse::<u32>().ok()?;
+    let denominator = denominator.parse::<u32>().ok()?;
+    if numerator == 0 || denominator == 0 {
+        return None;
+    }
+    Some((numerator, denominator))
+}
+
+fn even_dimension(value: u32) -> u32 {
+    value.max(2) & !1
+}
+
+fn is_interlaced(field_order: Option<&str>) -> bool {
+    matches!(
+        field_order.map(str::to_ascii_lowercase).as_deref(),
+        Some("tt" | "bb" | "tb" | "bt")
+    )
+}
+
 fn preview_scaled_dimensions(width: Option<u32>, height: Option<u32>) -> Option<(u32, u32)> {
     let width = width?;
     let height = height?;
@@ -1072,23 +1266,70 @@ fn preview_scaled_dimensions(width: Option<u32>, height: Option<u32>) -> Option<
 }
 
 fn preview_audio_args(codec: Option<&str>) -> Vec<String> {
-    if codec.is_some_and(is_mp4_copy_safe_audio_codec) {
+    if codec.is_some_and(is_mp4_preview_safe_audio_codec) {
         vec!["-c:a".to_string(), "copy".to_string()]
     } else {
-        vec![
-            "-c:a".to_string(),
-            "aac".to_string(),
-            "-b:a".to_string(),
-            "128k".to_string(),
-        ]
+        preview_transcode_audio_args()
     }
 }
 
-fn is_mp4_copy_safe_audio_codec(codec: &str) -> bool {
+fn preview_transcode_audio_args() -> Vec<String> {
+    vec![
+        "-c:a".to_string(),
+        "aac".to_string(),
+        "-b:a".to_string(),
+        "128k".to_string(),
+        "-ac".to_string(),
+        "2".to_string(),
+    ]
+}
+
+fn is_mp4_preview_safe_audio_codec(codec: &str) -> bool {
+    matches!(codec.to_ascii_lowercase().as_str(), "aac" | "mp3")
+}
+
+fn can_stream_copy_preview_video(metadata: &VideoMetadata) -> bool {
+    let Some(codec) = metadata.video_codec.as_deref() else {
+        return false;
+    };
+    if !codec.eq_ignore_ascii_case("h264") {
+        return false;
+    }
+    is_web_safe_h264_profile(metadata.video_profile.as_deref())
+        && is_web_safe_preview_pix_fmt(metadata.pix_fmt.as_deref())
+}
+
+fn is_web_safe_h264_profile(profile: Option<&str>) -> bool {
+    let Some(profile) = profile else {
+        return true;
+    };
+    let profile = profile.to_ascii_lowercase();
+    !profile.contains("10")
+        && !profile.contains("4:2:2")
+        && !profile.contains("4:4:4")
+        && !profile.contains("422")
+        && !profile.contains("444")
+}
+
+fn is_web_safe_preview_pix_fmt(pix_fmt: Option<&str>) -> bool {
+    let Some(pix_fmt) = pix_fmt else {
+        return true;
+    };
     matches!(
-        codec.to_ascii_lowercase().as_str(),
-        "aac" | "mp3" | "alac" | "ac3" | "eac3"
+        pix_fmt.to_ascii_lowercase().as_str(),
+        "yuv420p" | "yuvj420p"
     )
+}
+
+fn is_avi_like(path: &Path, container: Option<&str>) -> bool {
+    if is_avi_like_path(path) {
+        return true;
+    }
+    container.is_some_and(|container| {
+        container
+            .split(',')
+            .any(|part| part.trim().eq_ignore_ascii_case("avi"))
+    })
 }
 
 fn seconds_arg(seconds: f64) -> String {
@@ -1245,6 +1486,9 @@ fn cleanup_preview_cache(cache_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
 
     fn metadata(
         duration_seconds: f64,
@@ -1263,6 +1507,10 @@ mod tests {
             bitrate,
             file_size_bytes,
             streams: Vec::new(),
+            pix_fmt: Some("yuv420p".to_string()),
+            video_profile: Some("High".to_string()),
+            field_order: Some("progressive".to_string()),
+            sample_aspect_ratio: Some("1:1".to_string()),
         }
     }
 
@@ -1324,6 +1572,98 @@ mod tests {
         let args = preview_audio_args(Some("aac"));
 
         assert_eq!(args, vec!["-c:a".to_string(), "copy".to_string()]);
+        assert_eq!(
+            preview_audio_args(Some("mp3")),
+            vec!["-c:a".to_string(), "copy".to_string()]
+        );
+    }
+
+    #[test]
+    fn preview_remux_reencodes_ac3_for_webview() {
+        let args = preview_audio_args(Some("ac3"));
+
+        assert_eq!(
+            args,
+            vec![
+                "-c:a".to_string(),
+                "aac".to_string(),
+                "-b:a".to_string(),
+                "128k".to_string(),
+                "-ac".to_string(),
+                "2".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn h264_avi_can_stream_copy_when_webview_safe() {
+        let mut info = metadata(10.0, 8 * 1024 * 1024, None);
+        info.container = Some("avi".to_string());
+        info.video_codec = Some("h264".to_string());
+        info.pix_fmt = Some("yuv420p".to_string());
+        info.video_profile = Some("High".to_string());
+
+        assert!(can_stream_copy_preview_video(&info));
+    }
+
+    #[test]
+    fn mpeg4_avi_and_hi10p_need_a_transcode_preview() {
+        let mut xvid = metadata(10.0, 8 * 1024 * 1024, None);
+        xvid.container = Some("avi".to_string());
+        xvid.video_codec = Some("mpeg4".to_string());
+        assert!(!can_stream_copy_preview_video(&xvid));
+
+        let mut hi10p = metadata(10.0, 8 * 1024 * 1024, None);
+        hi10p.video_profile = Some("High 10".to_string());
+        hi10p.pix_fmt = Some("yuv420p10le".to_string());
+        assert!(!can_stream_copy_preview_video(&hi10p));
+    }
+
+    #[test]
+    fn avi_preview_input_generates_missing_timestamps() {
+        let mut info = metadata(10.0, 8 * 1024 * 1024, None);
+        info.container = Some("avi".to_string());
+        let args = preview_input_args(Path::new(r"C:\Videos\clip.avi"), &info);
+
+        assert!(args.windows(2).any(|pair| pair[0] == "-fflags" && pair[1] == "+genpts+igndts"));
+        assert!(args.windows(2).any(|pair| pair[0] == "-probesize" && pair[1] == "20000000"));
+    }
+
+    #[test]
+    fn avi_preview_transcode_is_fast_and_square_pixel() {
+        let mut info = metadata(10.0, 8 * 1024 * 1024, None);
+        info.container = Some("avi".to_string());
+        info.video_codec = Some("mpeg4".to_string());
+        info.width = Some(720);
+        info.height = Some(480);
+        info.sample_aspect_ratio = Some("32:27".to_string());
+        info.field_order = Some("tt".to_string());
+
+        let args = preview_args(Path::new("clip.avi"), &info, PreviewMethod::Transcode);
+        let vf = args
+            .windows(2)
+            .find(|pair| pair[0] == "-vf")
+            .map(|pair| pair[1].as_str())
+            .expect("video filter");
+
+        assert!(args.windows(2).any(|pair| pair[0] == "-preset" && pair[1] == "ultrafast"));
+        assert!(args.windows(2).any(|pair| pair[0] == "-fps_mode" && pair[1] == "cfr"));
+        assert!(vf.contains("yadif=0:-1:0"));
+        assert!(vf.contains("scale=852:480"));
+        assert!(vf.contains("setsar=1"));
+    }
+
+    #[test]
+    fn preview_copy_args_keep_h264_and_fix_avi_timestamps() {
+        let mut info = metadata(10.0, 8 * 1024 * 1024, None);
+        info.container = Some("avi".to_string());
+        let args = preview_args(Path::new("clip.avi"), &info, PreviewMethod::StreamCopy);
+
+        assert!(args.windows(2).any(|pair| pair[0] == "-c:v" && pair[1] == "copy"));
+        assert!(args.windows(2).any(|pair| pair[0] == "-fflags" && pair[1] == "+genpts+igndts"));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-avoid_negative_ts" && pair[1] == "make_zero"));
     }
 
     #[test]
@@ -1409,5 +1749,132 @@ mod tests {
             photo_webp_quality(&PhotoCompressionPreset::Small)
                 < photo_webp_quality(&PhotoCompressionPreset::Balanced)
         );
+    }
+
+    fn bundled_ffmpeg() -> Option<PathBuf> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("binaries")
+            .join("ffmpeg-x86_64-pc-windows-msvc.exe");
+        let metadata = path.metadata().ok()?;
+        (metadata.len() > 1_000_000).then_some(path)
+    }
+
+    fn run_ffmpeg(ffmpeg: &Path, args: &[String]) -> bool {
+        let mut command = Command::new(ffmpeg);
+        command
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        command
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn bundled_ffmpeg_can_transcode_mpeg4_avi_preview() {
+        let Some(ffmpeg) = bundled_ffmpeg() else {
+            return;
+        };
+
+        let dir = std::env::temp_dir().join(format!("hitplayer-avi-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("clip.avi");
+        let output = dir.join("preview.mp4");
+
+        let created = run_ffmpeg(
+            &ffmpeg,
+            &[
+                "-y".to_string(),
+                "-f".to_string(),
+                "lavfi".to_string(),
+                "-i".to_string(),
+                "testsrc=size=320x240:rate=10:duration=1".to_string(),
+                "-f".to_string(),
+                "lavfi".to_string(),
+                "-i".to_string(),
+                "sine=frequency=440:duration=1".to_string(),
+                "-c:v".to_string(),
+                "mpeg4".to_string(),
+                "-c:a".to_string(),
+                "mp2".to_string(),
+                path_arg(&input),
+            ],
+        );
+        assert!(created, "could not create a sample AVI");
+
+        let mut info = metadata(1.0, 50_000, None);
+        info.container = Some("avi".to_string());
+        info.video_codec = Some("mpeg4".to_string());
+        info.audio_codec = Some("mp2".to_string());
+        info.width = Some(320);
+        info.height = Some(240);
+        info.pix_fmt = Some("yuv420p".to_string());
+        info.field_order = Some("progressive".to_string());
+        info.sample_aspect_ratio = Some("1:1".to_string());
+
+        let mut args = preview_args(&input, &info, PreviewMethod::Transcode);
+        args.push(path_arg(&output));
+        assert!(run_ffmpeg(&ffmpeg, &args), "AVI preview transcode failed");
+        assert!(output_file_ready(&output));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bundled_ffmpeg_can_remux_h264_avi_preview() {
+        let Some(ffmpeg) = bundled_ffmpeg() else {
+            return;
+        };
+
+        let dir = std::env::temp_dir().join(format!("hitplayer-avi-h264-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("clip.avi");
+        let output = dir.join("preview.mp4");
+
+        let created = run_ffmpeg(
+            &ffmpeg,
+            &[
+                "-y".to_string(),
+                "-f".to_string(),
+                "lavfi".to_string(),
+                "-i".to_string(),
+                "testsrc=size=320x240:rate=10:duration=1".to_string(),
+                "-f".to_string(),
+                "lavfi".to_string(),
+                "-i".to_string(),
+                "sine=frequency=440:duration=1".to_string(),
+                "-c:v".to_string(),
+                "libx264".to_string(),
+                "-preset".to_string(),
+                "ultrafast".to_string(),
+                "-pix_fmt".to_string(),
+                "yuv420p".to_string(),
+                "-c:a".to_string(),
+                "aac".to_string(),
+                path_arg(&input),
+            ],
+        );
+        assert!(created, "could not create a sample H.264 AVI");
+
+        let mut info = metadata(1.0, 50_000, None);
+        info.container = Some("avi".to_string());
+        info.video_codec = Some("h264".to_string());
+        info.audio_codec = Some("aac".to_string());
+        info.width = Some(320);
+        info.height = Some(240);
+
+        let mut args = preview_args(&input, &info, PreviewMethod::StreamCopy);
+        args.push(path_arg(&output));
+        assert!(run_ffmpeg(&ffmpeg, &args), "H.264 AVI remux failed");
+        assert!(output_file_ready(&output));
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

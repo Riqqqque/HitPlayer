@@ -527,6 +527,20 @@ export default function App() {
     }
   }
 
+  function handlePreviewDuration(seconds: number) {
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+      return;
+    }
+
+    setMetadata((current) => {
+      if (!current || current.durationSeconds != null) {
+        return current;
+      }
+      return { ...current, durationSeconds: seconds };
+    });
+    setTrimEnd((end) => (end > 0 ? end : seconds));
+  }
+
   function handleFastTrim() {
     void runJob("Fast Trim", () =>
       fastTrim({
@@ -736,6 +750,7 @@ export default function App() {
           onPlaybackAudioChange={handlePlaybackAudioChange}
           onPreviewFailed={handlePreviewFailed}
           onTimeUpdate={handleTimeUpdate}
+          onDuration={handlePreviewDuration}
         />
 
         <aside className={theaterMode ? "hidden" : "min-h-0 space-y-4 overflow-y-auto pr-1"}>

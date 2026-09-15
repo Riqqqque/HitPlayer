@@ -11,10 +11,8 @@ npm run setup:ffmpeg
 The script writes:
 
 ```text
-src-tauri\binaries\ffmpeg.exe
-src-tauri\binaries\ffprobe.exe
 src-tauri\binaries\ffmpeg-x86_64-pc-windows-msvc.exe
 src-tauri\binaries\ffprobe-x86_64-pc-windows-msvc.exe
 ```
 
-The target-triple filenames are required by Tauri v2 sidecar bundling on Windows.
+The target-triple filenames are required by Tauri v2 sidecar bundling on Windows. Tauri renames them to `ffmpeg.exe` and `ffprobe.exe` in development and installed builds, so separate plain-name source copies only waste disk space.

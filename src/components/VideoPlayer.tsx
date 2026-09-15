@@ -20,6 +20,7 @@ type VideoPlayerProps = {
   onPlaybackAudioChange: (audio: PlaybackAudioState) => void;
   onPreviewFailed: () => void;
   onTimeUpdate: (seconds: number) => void;
+  onDuration: (seconds: number) => void;
 };
 
 export function canTryPreview(path: string | null): boolean {
@@ -48,6 +49,7 @@ function VideoPlayerComponent({
   onPlaybackAudioChange,
   onPreviewFailed,
   onTimeUpdate,
+  onDuration,
 }: VideoPlayerProps) {
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null);
   const canPreview = !!previewUrl && !previewFailed;
@@ -120,6 +122,7 @@ function VideoPlayerComponent({
                   controls
                   preload="auto"
                   onError={onPreviewFailed}
+                  onLoadedMetadata={(event) => onDuration(event.currentTarget.duration)}
                   onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
                   onVolumeChange={(event) => handleVolumeChange(event.currentTarget)}
                 >
@@ -138,6 +141,7 @@ function VideoPlayerComponent({
                 playsInline
                 preload="auto"
                 onError={onPreviewFailed}
+                onLoadedMetadata={(event) => onDuration(event.currentTarget.duration)}
                 onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
                 onVolumeChange={(event) => handleVolumeChange(event.currentTarget)}
               >
